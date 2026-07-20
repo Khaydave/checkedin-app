@@ -4,6 +4,12 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>CheckedIn — Event QR Check-in</title>
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#378ADD" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="CheckedIn" />
 
 <!-- Firebase (compat SDK, easiest for a single-file app) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
@@ -26,20 +32,30 @@
     --purple-50:#EEEDFE; --purple-100:#CECBF6; --purple-400:#7F77DD; --purple-600:#534AB7; --purple-800:#3C3489;
     --green-500:#639922; --green-100:#EAF3DE; --amber-500:#BA7517; --amber-100:#FAEEDA;
     --gray-50:#F7F7F5; --gray-200:#E4E2DA; --gray-500:#888780; --gray-900:#2C2C2A;
+    --surface:#ffffff; --surface-alt:#fafaf8;
     --radius:14px; --radius-pill:999px;
   }
+  body.dark{
+    --blue-50:rgba(55,138,221,0.16); --purple-50:rgba(127,119,221,0.16);
+    --gray-50:#17171B; --gray-200:#33333A; --gray-500:#9C9CA5; --gray-900:#EDEDEF;
+    --surface:#1E1E23; --surface-alt:#26262C;
+  }
+  body.dark .checkin-toast{color:var(--gray-900);}
+  body.dark input, body.dark select{border-color:var(--gray-200); color:var(--gray-900);}
+  body.dark .scan-result.ok{background:rgba(99,153,34,0.18);}
+  body.dark .scan-result.err{background:rgba(196,67,61,0.18);}
   *{box-sizing:border-box;}
   body{
     margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
     background:var(--gray-50); color:var(--gray-900);
   }
-  .app{max-width:480px; margin:0 auto; min-height:100vh; background:#fff; box-shadow:0 0 24px rgba(0,0,0,0.06); padding-bottom:80px;}
+  .app{max-width:480px; margin:0 auto; min-height:100vh; background:var(--surface); box-shadow:0 0 24px rgba(0,0,0,0.06); padding-bottom:80px;}
   header{padding:20px; display:flex; align-items:center; justify-content:space-between;}
   header h1{font-size:18px; font-weight:600; margin:0;}
   .screen{padding:0 20px;}
   input, select{
     width:100%; height:44px; border-radius:var(--radius-pill); border:1px solid var(--gray-200);
-    padding:0 16px; font-size:14px; margin-bottom:10px; background:#fafaf8;
+    padding:0 16px; font-size:14px; margin-bottom:10px; background:var(--surface-alt); color:var(--gray-900);
   }
   button{
     cursor:pointer; border:none; border-radius:var(--radius-pill); height:44px; font-size:14px;
@@ -80,7 +96,7 @@
   .tab-switcher-icon{font-size:15px;}
   .tab-switcher-chevron{margin-left:auto; font-size:12px; color:var(--blue-600);}
   .tab-menu{
-    position:absolute; top:52px; left:0; right:0; background:#fff; border-radius:16px;
+    position:absolute; top:52px; left:0; right:0; background:var(--surface); border-radius:16px;
     box-shadow:0 8px 24px rgba(0,0,0,0.12); border:1px solid var(--gray-200); overflow:hidden; z-index:10;
   }
   .tab-menu-item{
@@ -90,6 +106,30 @@
   .tab-menu-item:hover{background:var(--gray-50);}
   .tab-menu-item.active{background:var(--blue-50); color:var(--blue-800); font-weight:600;}
   .tab-menu-item + .tab-menu-item{border-top:1px solid var(--gray-200);}
+
+  .row-icon-btn{
+    font-size:14px; color:var(--gray-500); cursor:pointer; padding:2px 4px;
+  }
+  .row-icon-btn:hover{color:var(--blue-600);}
+
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:900;
+    display:flex; align-items:flex-end; justify-content:center;
+  }
+  .modal-box{
+    background:var(--surface); color:var(--gray-900); width:100%; max-width:480px;
+    border-radius:20px 20px 0 0; padding:24px 20px 28px; max-height:85vh; overflow-y:auto;
+    animation:modal-slide-up 0.25s ease;
+  }
+  @keyframes modal-slide-up{ from{transform:translateY(30px); opacity:0;} to{transform:translateY(0); opacity:1;} }
+  .modal-box h3{margin:0 0 16px; font-size:16px;}
+  .modal-actions{display:flex; gap:10px; margin-top:6px;}
+  .modal-actions button{flex:1;}
+  .theme-toggle{
+    width:32px; height:32px; border-radius:50%; background:var(--surface-alt);
+    display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:14px;
+    border:1px solid var(--gray-200);
+  }
   .hidden{display:none !important;}
   .center{text-align:center;}
   #qr-reader{border-radius:16px; overflow:hidden;}
@@ -99,7 +139,7 @@
 
   .checkin-toast{
     position:fixed; top:50%; left:50%; transform:translate(-50%,-50%) scale(0.7);
-    z-index:999; background:#fff; border-radius:24px; padding:28px 32px;
+    z-index:999; background:var(--surface); border-radius:24px; padding:28px 32px;
     box-shadow:0 16px 40px rgba(0,0,0,0.25); text-align:center; min-width:220px;
     opacity:0; pointer-events:none; transition:opacity 0.18s ease, transform 0.18s ease;
   }
@@ -218,6 +258,12 @@
     <div class="checkin-toast-icon" id="checkin-toast-icon"></div>
     <p class="checkin-toast-title" id="checkin-toast-title"></p>
     <p class="checkin-toast-sub" id="checkin-toast-sub"></p>
+    <button id="checkin-undo-btn" class="hidden" onclick="undoLastCheckin()" style="margin-top:12px; height:34px; padding:0 16px; font-size:12px; background:var(--gray-50); color:var(--gray-900);">Undo</button>
+  </div>
+
+  <!-- Generic modal used for editing events/participants -->
+  <div id="app-modal" class="modal-overlay hidden" onclick="if(event.target===this) closeModal()">
+    <div class="modal-box" id="modal-box"></div>
   </div>
 
   <!-- LOADING SPLASH — shown while Firebase checks whether you're already logged in,
@@ -259,15 +305,25 @@
   <div id="screen-dashboard" class="screen hidden">
     <header>
       <h1>My events</h1>
-      <button class="btn-ghost" onclick="logOut()" style="height:32px; padding:0 12px; font-size:12px;">Log out</button>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <div class="theme-toggle" id="theme-toggle" onclick="toggleDarkMode()" title="Toggle dark mode">&#9789;</div>
+        <button class="btn-ghost" onclick="logOut()" style="height:32px; padding:0 12px; font-size:12px;">Log out</button>
+      </div>
     </header>
     <p id="dashboard-greeting" class="muted" style="margin:-10px 0 16px;"></p>
+
+    <div id="install-banner" class="hidden" style="background:var(--blue-50); border-radius:16px; padding:12px 14px; margin-bottom:14px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
+      <p style="font-size:12px; color:var(--blue-800); margin:0;" id="install-banner-text">Install CheckedIn for quicker access.</p>
+      <button id="install-banner-btn" onclick="triggerInstall()" style="height:32px; padding:0 14px; font-size:12px; background:var(--blue-400); color:#fff; flex-shrink:0;">Install</button>
+      <span onclick="dismissInstallBanner()" style="cursor:pointer; color:var(--blue-600); font-size:16px; flex-shrink:0;">&times;</span>
+    </div>
     <div id="event-list"></div>
     <button class="btn-primary" onclick="showCreateEvent()">+ New event</button>
 
     <div id="create-event-form" class="hidden" style="margin-top:16px;">
       <input id="new-event-title" placeholder="Event title" />
       <input id="new-event-date" type="date" />
+      <input id="new-event-capacity" type="number" min="1" placeholder="Capacity (optional)" />
       <button class="btn-primary" onclick="createNewEvent()">Create event</button>
     </div>
   </div>
@@ -293,6 +349,7 @@
       </div>
       <div class="live-bar-progress"><div id="live-bar-fill"></div></div>
     </div>
+    <p id="capacity-warning" class="hidden" style="margin:-8px 0 12px; font-size:11px; font-weight:600; color:var(--amber-500);"></p>
 
     <div class="tab-switcher">
       <button class="tab-switcher-btn" id="tab-switcher-btn" onclick="toggleTabMenu()">
@@ -467,9 +524,64 @@ db.enablePersistence({ synchronizeTabs: true }).catch(err => {
    }
    ========================================================= */
 
+// ---------- INSTALL / ADD TO HOME SCREEN ----------
+let deferredInstallPrompt = null;
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+const installDismissed = localStorage.getItem('checkedin-install-dismissed') === 'true';
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  if (!isStandalone && !installDismissed) {
+    document.getElementById('install-banner').classList.remove('hidden');
+  }
+});
+
+function maybeShowIosInstallTip(){
+  if (isIOS && !isStandalone && !installDismissed) {
+    document.getElementById('install-banner-text').innerText = 'Add CheckedIn to your Home Screen: tap Share, then "Add to Home Screen".';
+    document.getElementById('install-banner-btn').classList.add('hidden'); // iOS has no programmatic install prompt — just the tip
+    document.getElementById('install-banner').classList.remove('hidden');
+  }
+}
+
+function triggerInstall(){
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  deferredInstallPrompt.userChoice.finally(() => {
+    deferredInstallPrompt = null;
+    document.getElementById('install-banner').classList.add('hidden');
+  });
+}
+function dismissInstallBanner(){
+  document.getElementById('install-banner').classList.add('hidden');
+  localStorage.setItem('checkedin-install-dismissed', 'true');
+}
+
+// ---------- DARK MODE ----------
+// Preference saved in localStorage — this is a plain preference flag, not sensitive data.
+if (localStorage.getItem('checkedin-theme') === 'dark') {
+  document.body.classList.add('dark');
+}
+function toggleDarkMode(){
+  document.body.classList.toggle('dark');
+  localStorage.setItem('checkedin-theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+}
+
+// ---------- GENERIC MODAL ----------
+function openModal(html){
+  document.getElementById('modal-box').innerHTML = html;
+  document.getElementById('app-modal').classList.remove('hidden');
+}
+function closeModal(){
+  document.getElementById('app-modal').classList.add('hidden');
+}
+
 let currentUser = null;
 let currentEventId = null;
 let currentEventTitle = "";
+let currentEventCapacity = null;
 
 // ---------- AUTH ----------
 let authMode = 'signin'; // 'signin' | 'signup'
@@ -556,13 +668,16 @@ function showCreateEvent(){
 function createNewEvent(){
   const title = document.getElementById('new-event-title').value.trim();
   const date = document.getElementById('new-event-date').value;
+  const capacityRaw = document.getElementById('new-event-capacity').value;
+  const capacity = capacityRaw ? parseInt(capacityRaw, 10) : null;
   if (!title) { alert('Enter an event title first.'); return; }
   if (!currentUser) { alert('You are not signed in — please log in again.'); return; }
   db.collection('events').add({
-    organizerId: currentUser.uid, title, date, createdAt: Date.now()
+    organizerId: currentUser.uid, title, date, capacity, createdAt: Date.now()
   }).then(docRef => {
     document.getElementById('new-event-title').value = '';
     document.getElementById('new-event-date').value = '';
+    document.getElementById('new-event-capacity').value = '';
     document.getElementById('create-event-form').classList.add('hidden');
     openEvent(docRef.id, title); // jump straight into the new event, no extra click needed
   }).catch(e => {
@@ -575,6 +690,7 @@ function renderDashboardGreeting(){
   const timeGreeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   const name = (currentUser.email || '').split('@')[0];
   document.getElementById('dashboard-greeting').innerText = `${timeGreeting}, ${name}.`;
+  maybeShowIosInstallTip();
 }
 function loadEvents(){
   if (!currentUser) return;
@@ -593,7 +709,17 @@ function loadEvents(){
       div.className = `card ${cls}`;
       div.style.cursor = 'pointer';
       div.onclick = () => openEvent(doc.id, e.title);
-      div.innerHTML = `<h3>${e.title}</h3><p>${e.date || 'No date set'}</p>`;
+      const capacityLine = e.capacity ? ` &middot; capacity ${e.capacity}` : '';
+      div.innerHTML = `
+        <div style="display:flex; align-items:flex-start; justify-content:space-between;">
+          <div><h3>${e.title}</h3><p>${e.date || 'No date set'}${capacityLine}</p></div>
+          <span style="display:flex; gap:10px; flex-shrink:0;">
+            <span class="row-icon-btn edit-icon" title="Edit event" style="color:inherit; opacity:0.8;">&#9998;</span>
+            <span class="row-icon-btn delete-icon" title="Delete event" style="color:inherit; opacity:0.8;">&#128465;</span>
+          </span>
+        </div>`;
+      div.querySelector('.edit-icon').onclick = (evt) => { evt.stopPropagation(); openEditEvent(doc.id); };
+      div.querySelector('.delete-icon').onclick = (evt) => { evt.stopPropagation(); deleteEvent(doc.id, e.title); };
       list.appendChild(div);
     });
   }).catch(e => {
@@ -602,6 +728,57 @@ function loadEvents(){
     alert('Could not load events: ' + e.message);
   });
 }
+
+function openEditEvent(eventId){
+  db.collection('events').doc(eventId).get().then(doc => {
+    const e = doc.data();
+    if (!e) return;
+    openModal(`
+      <h3>Edit event</h3>
+      <input id="edit-e-title" placeholder="Event title" value="${(e.title || '').replace(/"/g, '&quot;')}" />
+      <input id="edit-e-date" type="date" value="${e.date || ''}" />
+      <input id="edit-e-capacity" type="number" min="1" placeholder="Capacity (optional)" value="${e.capacity || ''}" />
+      <div class="modal-actions">
+        <button class="btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn-primary" onclick="saveEditEvent('${eventId}')">Save changes</button>
+      </div>
+    `);
+  });
+}
+function saveEditEvent(eventId){
+  const title = document.getElementById('edit-e-title').value.trim();
+  if (!title) { alert('Event title cannot be empty.'); return; }
+  const capacityRaw = document.getElementById('edit-e-capacity').value;
+  const capacity = capacityRaw ? parseInt(capacityRaw, 10) : null;
+  db.collection('events').doc(eventId).update({
+    title,
+    date: document.getElementById('edit-e-date').value,
+    capacity
+  }).then(() => {
+    closeModal();
+    loadEvents();
+    if (currentEventId === eventId) {
+      currentEventTitle = title;
+      currentEventCapacity = capacity;
+      document.getElementById('event-title-header').innerText = title;
+      refreshScanStats();
+    }
+  }).catch(e => alert('Could not save changes: ' + e.message));
+}
+function deleteEvent(eventId, title){
+  if (!confirm(`Delete "${title}" and all of its participants? This can't be undone.`)) return;
+  // Firestore doesn't cascade-delete subcollections automatically — delete every
+  // participant doc first, then the event doc itself.
+  db.collection('events').doc(eventId).collection('participants').get().then(snap => {
+    const batch = db.batch();
+    snap.docs.forEach(d => batch.delete(d.ref));
+    batch.delete(db.collection('events').doc(eventId));
+    return batch.commit();
+  }).then(() => {
+    loadEvents();
+  }).catch(e => alert('Could not delete event: ' + e.message));
+}
+
 // Renders the dashboard UI. Called either from the in-app Back button
 // (via history.back(), see below) or from the phone's back button (via popstate).
 function goToDashboardUI(){
@@ -621,12 +798,16 @@ function backToDashboard(){
 function openEvent(eventId, title){
   currentEventId = eventId;
   currentEventTitle = title;
+  currentEventCapacity = null;
   document.getElementById('event-title-header').innerText = title;
   document.getElementById('screen-dashboard').classList.add('hidden');
   document.getElementById('screen-event').classList.remove('hidden');
   switchTab('participants');
   loadParticipants();
-  refreshScanStats();
+  db.collection('events').doc(eventId).get().then(doc => {
+    currentEventCapacity = (doc.data() || {}).capacity || null;
+    refreshScanStats();
+  });
   // Push a history entry so the phone's back button lands on the dashboard
   // instead of leaving/reloading the whole app.
   history.pushState({ screen: 'event', eventId }, '', '#event/' + eventId);
@@ -711,20 +892,27 @@ function addParticipant(){
   const organization = document.getElementById('p-organization').value.trim();
   const notes = document.getElementById('p-notes').value.trim();
   if (!name) { alert('Enter a participant name first.'); return; }
-  participantsRef().add({
-    name, contact, category, organization, notes,
-    uniqueCode: uniqueCode(), status: 'pending', addedAt: Date.now()
-  }).then(() => {
-    document.getElementById('p-name').value = '';
-    document.getElementById('p-contact').value = '';
-    document.getElementById('p-category').value = '';
-    document.getElementById('p-organization').value = '';
-    document.getElementById('p-notes').value = '';
-    loadParticipants();
-    refreshScanStats();
-  }).catch(e => {
-    console.error('addParticipant failed:', e);
-    alert('Could not add participant: ' + e.message);
+
+  participantsRef().get().then(snap => {
+    const isDuplicate = snap.docs.some(d => d.data().name.trim().toLowerCase() === name.toLowerCase());
+    if (isDuplicate && !confirm(`"${name}" is already on this event's list. Add another entry with the same name anyway?`)) {
+      return;
+    }
+    participantsRef().add({
+      name, contact, category, organization, notes,
+      uniqueCode: uniqueCode(), status: 'pending', addedAt: Date.now()
+    }).then(() => {
+      document.getElementById('p-name').value = '';
+      document.getElementById('p-contact').value = '';
+      document.getElementById('p-category').value = '';
+      document.getElementById('p-organization').value = '';
+      document.getElementById('p-notes').value = '';
+      loadParticipants();
+      refreshScanStats();
+    }).catch(e => {
+      console.error('addParticipant failed:', e);
+      alert('Could not add participant: ' + e.message);
+    });
   });
 }
 function importCsv(evt){
@@ -733,18 +921,30 @@ function importCsv(evt){
   Papa.parse(file, {
     header: true, skipEmptyLines: true,
     complete: results => {
-      const batch = db.batch();
-      results.data.forEach(row => {
-        const name = row.name || row.Name;
-        const contact = row.contact || row.Contact || '';
-        const category = row.category || row.Category || '';
-        const organization = row.organization || row.Organization || row.company || row.Company || '';
-        const notes = row.notes || row.Notes || '';
-        if (!name) return;
-        const ref = participantsRef().doc();
-        batch.set(ref, { name, contact, category, organization, notes, uniqueCode: uniqueCode(), status: 'pending', addedAt: Date.now() });
+      participantsRef().get().then(snap => {
+        const existingNames = new Set(snap.docs.map(d => d.data().name.trim().toLowerCase()));
+        const batch = db.batch();
+        let added = 0, skipped = 0;
+        results.data.forEach(row => {
+          const name = row.name || row.Name;
+          if (!name) return;
+          const nameKey = name.trim().toLowerCase();
+          if (existingNames.has(nameKey)) { skipped++; return; }
+          existingNames.add(nameKey); // also catch duplicates within the CSV itself
+          const contact = row.contact || row.Contact || '';
+          const category = row.category || row.Category || '';
+          const organization = row.organization || row.Organization || row.company || row.Company || '';
+          const notes = row.notes || row.Notes || '';
+          const ref = participantsRef().doc();
+          batch.set(ref, { name, contact, category, organization, notes, uniqueCode: uniqueCode(), status: 'pending', addedAt: Date.now() });
+          added++;
+        });
+        batch.commit().then(() => {
+          loadParticipants();
+          refreshScanStats();
+          if (skipped > 0) alert(`Imported ${added} participant(s). Skipped ${skipped} duplicate name(s) already on the list.`);
+        }).catch(e => alert('CSV import failed: ' + e.message));
       });
-      batch.commit().then(() => { loadParticipants(); refreshScanStats(); }).catch(e => alert('CSV import failed: ' + e.message));
     }
   });
 }
@@ -760,13 +960,70 @@ function loadParticipants(){
       const p = doc.data();
       const row = document.createElement('div');
       row.className = 'list-row';
-      row.innerHTML = `<span class="list-row-left">${avatarHtml(p.name)}<span>${p.name}${categoryBadgeHtml(p.category)}</span></span><span class="badge ${p.status === 'checked_in' ? 'checked' : 'pending'}">${p.status === 'checked_in' ? 'Checked in' : 'Pending'}</span>`;
+      row.innerHTML = `<span class="list-row-left">${avatarHtml(p.name)}<span>${p.name}${categoryBadgeHtml(p.category)}</span></span>
+        <span style="display:flex; align-items:center; gap:8px;">
+          <span class="badge ${p.status === 'checked_in' ? 'checked' : 'pending'}">${p.status === 'checked_in' ? 'Checked in' : 'Pending'}</span>
+          <span class="row-icon-btn edit-icon" title="Edit">&#9998;</span>
+          <span class="row-icon-btn delete-icon" title="Delete">&#128465;</span>
+        </span>`;
+      row.querySelector('.edit-icon').onclick = () => openEditParticipant(doc.id);
+      row.querySelector('.delete-icon').onclick = () => deleteParticipant(doc.id, p.name);
       list.appendChild(row);
     });
   }).catch(e => {
     list.innerHTML = '';
     alert('Could not load participants: ' + e.message);
   });
+}
+
+function openEditParticipant(participantId){
+  participantsRef().doc(participantId).get().then(doc => {
+    const p = doc.data();
+    if (!p) return;
+    openModal(`
+      <h3>Edit participant</h3>
+      <input id="edit-p-name" placeholder="Full name" value="${(p.name || '').replace(/"/g, '&quot;')}" />
+      <input id="edit-p-contact" placeholder="Phone or email" value="${(p.contact || '').replace(/"/g, '&quot;')}" />
+      <select id="edit-p-category">
+        <option value="">Category (optional)</option>
+        <option value="General">General</option>
+        <option value="VIP">VIP</option>
+        <option value="Speaker">Speaker</option>
+        <option value="Press">Press</option>
+        <option value="Staff">Staff</option>
+      </select>
+      <input id="edit-p-organization" placeholder="Organization / company (optional)" value="${(p.organization || '').replace(/"/g, '&quot;')}" />
+      <input id="edit-p-notes" placeholder="Notes (optional)" value="${(p.notes || '').replace(/"/g, '&quot;')}" />
+      <div class="modal-actions">
+        <button class="btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn-primary" onclick="saveEditParticipant('${participantId}')">Save changes</button>
+      </div>
+    `);
+    document.getElementById('edit-p-category').value = p.category || '';
+  });
+}
+function saveEditParticipant(participantId){
+  const name = document.getElementById('edit-p-name').value.trim();
+  if (!name) { alert('Name cannot be empty.'); return; }
+  participantsRef().doc(participantId).update({
+    name,
+    contact: document.getElementById('edit-p-contact').value.trim(),
+    category: document.getElementById('edit-p-category').value,
+    organization: document.getElementById('edit-p-organization').value.trim(),
+    notes: document.getElementById('edit-p-notes').value.trim()
+  }).then(() => {
+    closeModal();
+    loadParticipants();
+    renderCheckinSearch();
+  }).catch(e => alert('Could not save changes: ' + e.message));
+}
+function deleteParticipant(participantId, name){
+  if (!confirm(`Remove "${name}" from this event? This can't be undone.`)) return;
+  participantsRef().doc(participantId).delete().then(() => {
+    loadParticipants();
+    refreshScanStats();
+    renderCheckinSearch();
+  }).catch(e => alert('Could not delete participant: ' + e.message));
 }
 
 // ---------- SEARCH-AND-TAP CHECK-IN (primary method — no camera needed) ----------
@@ -814,6 +1071,7 @@ function checkInParticipantById(participantId){
       return;
     }
     ref.update({ status: 'checked_in', checkedInAt: Date.now() }).then(() => {
+      lastCheckin = { eventId: currentEventId, participantId };
       showCheckinToast('ok', p.name, 'Checked in successfully', p.category);
       refreshScanStats();
       loadParticipants();
@@ -1013,6 +1271,7 @@ function processScannedCode(decodedText){
     doc.ref.update({ status: 'checked_in', checkedInAt: Date.now() }).then(() => {
       resultEl.className = 'scan-result ok';
       resultEl.innerText = `${p.name} checked in.`;
+      lastCheckin = { eventId: currentEventId, participantId: doc.id };
       showCheckinToast('ok', p.name, 'Checked in successfully', p.category);
       refreshScanStats();
       loadParticipants();
@@ -1022,14 +1281,59 @@ function processScannedCode(decodedText){
 }
 
 let toastTimeout = null;
+let lastCheckin = null; // { eventId, participantId } — powers the "Undo" button on the toast
+// ---------- SOUND ----------
+let audioCtx = null;
+function playTone(type){
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+
+    if (type === 'ok') {
+      // Two quick ascending notes — a friendly "ding-ding"
+      [880, 1320].forEach((freq, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const start = audioCtx.currentTime + i * 0.09;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.25, start + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.18);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(start);
+        osc.stop(start + 0.2);
+      });
+    } else {
+      // A single low buzz for errors/duplicates
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'square';
+      osc.frequency.value = 180;
+      const start = audioCtx.currentTime;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.15, start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.25);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(start);
+      osc.stop(start + 0.26);
+    }
+  } catch (e) {
+    // Web Audio can fail before the first user gesture on some browsers — fail silently, sound is a nice-to-have.
+  }
+}
+
 function showCheckinToast(type, title, sub, category){
   const toast = document.getElementById('checkin-toast');
   const icon = document.getElementById('checkin-toast-icon');
+  const undoBtn = document.getElementById('checkin-undo-btn');
   document.getElementById('checkin-toast-title').innerText = title;
   const isPriority = type === 'ok' && (category === 'VIP' || category === 'Speaker');
   document.getElementById('checkin-toast-sub').innerText = isPriority ? `${category} arrived — ${sub}` : sub;
   icon.innerHTML = type === 'ok' ? (isPriority ? '&#9733;' : '&#10003;') : '&#10005;'; // star for VIP/Speaker, checkmark, or cross
   toast.className = `checkin-toast ${type}${isPriority ? ' priority' : ''}`;
+  undoBtn.classList.toggle('hidden', type !== 'ok');
+  playTone(type);
   // Force a reflow so the pop-in animation replays even for back-to-back scans
   void toast.offsetWidth;
   toast.classList.add('show');
@@ -1037,7 +1341,22 @@ function showCheckinToast(type, title, sub, category){
   clearTimeout(toastTimeout);
   toastTimeout = setTimeout(() => {
     toast.classList.remove('show');
-  }, isPriority ? 3200 : 2200); // give staff a bit longer to notice a VIP/speaker arrival
+  }, isPriority ? 3800 : (type === 'ok' ? 3000 : 2200)); // extra time on success so there's a real chance to tap Undo
+}
+function undoLastCheckin(){
+  if (!lastCheckin) return;
+  const { eventId, participantId } = lastCheckin;
+  db.collection('events').doc(eventId).collection('participants').doc(participantId).update({
+    status: 'pending', checkedInAt: null
+  }).then(() => {
+    document.getElementById('checkin-toast').classList.remove('show');
+    lastCheckin = null;
+    if (eventId === currentEventId) {
+      refreshScanStats();
+      loadParticipants();
+      renderCheckinSearch();
+    }
+  }).catch(e => alert('Could not undo check-in: ' + e.message));
 }
 function refreshScanStats(){
   participantsRef().get().then(snap => {
@@ -1059,6 +1378,16 @@ function updateLiveBar(checked, total){
     fireConfetti();
   }
   if (checked < total) celebratedThisSession = false; // reset if a new invite is added after full check-in
+
+  const warningEl = document.getElementById('capacity-warning');
+  if (currentEventCapacity && total >= currentEventCapacity) {
+    warningEl.classList.remove('hidden');
+    warningEl.innerText = total > currentEventCapacity
+      ? `⚠ Over capacity: ${total} invited, limit is ${currentEventCapacity}.`
+      : `⚠ Capacity reached: ${total}/${currentEventCapacity}.`;
+  } else {
+    warningEl.classList.add('hidden');
+  }
 }
 function fireConfetti(){
   const colors = ['#378ADD', '#7F77DD', '#D4A017', '#639922'];
