@@ -121,7 +121,7 @@
     <div id="create-event-form" class="hidden" style="margin-top:16px;">
       <input id="new-event-title" placeholder="Event title" />
       <input id="new-event-date" type="date" />
-      <button class="btn-primary" onclick="createEvent()">Create event</button>
+      <button class="btn-primary" onclick="createNewEvent()">Create event</button>
     </div>
   </div>
 
@@ -329,7 +329,7 @@ auth.onAuthStateChanged(user => {
 function showCreateEvent(){
   document.getElementById('create-event-form').classList.toggle('hidden');
 }
-function createEvent(){
+function createNewEvent(){
   const title = document.getElementById('new-event-title').value.trim();
   const date = document.getElementById('new-event-date').value;
   if (!title) { alert('Enter an event title first.'); return; }
@@ -342,7 +342,7 @@ function createEvent(){
     document.getElementById('create-event-form').classList.add('hidden');
     loadEvents();
   }).catch(e => {
-    console.error('createEvent failed:', e);
+    console.error('createNewEvent failed:', e);
     alert('Could not create event: ' + e.message + '\n\nThis usually means Firestore security rules are not published yet, or Firestore is still in "test mode" setup. Check Firestore → Rules in the Firebase console.');
   });
 }
