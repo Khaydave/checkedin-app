@@ -110,6 +110,9 @@
   }
   .checkin-toast.ok .checkin-toast-icon{background:var(--green-500); animation:icon-pop 0.4s ease 0.05s both;}
   .checkin-toast.err .checkin-toast-icon{background:#C4433D; animation:icon-shake 0.4s ease;}
+  .checkin-toast.priority{border:2px solid #D4A017;}
+  .checkin-toast.priority .checkin-toast-icon{background:#D4A017; animation:icon-pop 0.4s ease 0.05s both;}
+  .checkin-toast.priority .checkin-toast-sub{color:#9A7412; font-weight:600;}
   @keyframes icon-pop{
     0%{transform:scale(0);} 70%{transform:scale(1.15);} 100%{transform:scale(1);}
   }
@@ -164,6 +167,19 @@
     border:2.5px solid var(--gray-200); border-top-color:var(--blue-400);
     animation:splash-spin 0.7s linear infinite;
   }
+
+  .live-bar{
+    display:flex; align-items:center; gap:16px; background:var(--blue-50);
+    border-radius:16px; padding:12px 16px; margin:0 0 12px; position:relative; overflow:hidden;
+  }
+  .live-bar-stat{display:flex; flex-direction:column; align-items:center; min-width:44px;}
+  .live-bar-num{font-size:20px; font-weight:700; color:var(--blue-800); line-height:1.1;}
+  .live-bar-label{font-size:10px; color:var(--blue-600);}
+  .live-bar-divider{width:1px; height:28px; background:rgba(0,0,0,0.08);}
+  .live-bar-progress{
+    flex:1; height:6px; border-radius:3px; background:rgba(255,255,255,0.7); overflow:hidden;
+  }
+  #live-bar-fill{height:100%; width:0%; background:var(--blue-400); border-radius:3px; transition:width 0.4s ease;}
   .ticket-code{background:white; border-radius:18px; padding:16px; display:inline-block; margin:12px 0;}
   .muted{color:var(--gray-500); font-size:12px;}
   .stat-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:14px 0;}
@@ -237,6 +253,21 @@
       <h1 id="event-title-header">Event</h1>
       <button class="btn-ghost" onclick="backToDashboard()" style="height:32px; padding:0 12px; font-size:12px;">Back</button>
     </header>
+
+    <!-- Always-visible live attendance bar — every professional check-in tool keeps this
+         in view rather than tucked inside a tab, since it's the number people glance at most. -->
+    <div class="live-bar">
+      <div class="live-bar-stat">
+        <span class="live-bar-num" id="live-checked">0</span>
+        <span class="live-bar-label">checked in</span>
+      </div>
+      <div class="live-bar-divider"></div>
+      <div class="live-bar-stat">
+        <span class="live-bar-num" id="live-invited">0</span>
+        <span class="live-bar-label">invited</span>
+      </div>
+      <div class="live-bar-progress"><div id="live-bar-fill"></div></div>
+    </div>
 
     <div class="tab-switcher">
       <button class="tab-switcher-btn" id="tab-switcher-btn" onclick="toggleTabMenu()">
@@ -380,6 +411,17 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
+
+// Offline persistence: check-in desks often have patchy wifi. This lets reads/writes
+// (like marking someone checked in) queue locally and sync automatically once the
+// connection comes back, instead of failing outright when offline.
+db.enablePersistence({ synchronizeTabs: true }).catch(err => {
+  if (err.code === 'failed-precondition') {
+    console.warn('Offline persistence unavailable — likely multiple tabs open.');
+  } else if (err.code === 'unimplemented') {
+    console.warn('Offline persistence not supported in this browser.');
+  }
+});
 
 /* =========================================================
    FIRESTORE SCHEMA
@@ -552,6 +594,7 @@ function openEvent(eventId, title){
   document.getElementById('screen-event').classList.remove('hidden');
   switchTab('participants');
   loadParticipants();
+  refreshScanStats();
   // Push a history entry so the phone's back button lands on the dashboard
   // instead of leaving/reloading the whole app.
   history.pushState({ screen: 'event', eventId }, '', '#event/' + eventId);
@@ -617,6 +660,7 @@ function addParticipant(){
     document.getElementById('p-organization').value = '';
     document.getElementById('p-notes').value = '';
     loadParticipants();
+    refreshScanStats();
   }).catch(e => {
     console.error('addParticipant failed:', e);
     alert('Could not add participant: ' + e.message);
@@ -639,7 +683,7 @@ function importCsv(evt){
         const ref = participantsRef().doc();
         batch.set(ref, { name, contact, category, organization, notes, uniqueCode: uniqueCode(), status: 'pending', addedAt: Date.now() });
       });
-      batch.commit().then(loadParticipants).catch(e => alert('CSV import failed: ' + e.message));
+      batch.commit().then(() => { loadParticipants(); refreshScanStats(); }).catch(e => alert('CSV import failed: ' + e.message));
     }
   });
 }
@@ -690,7 +734,9 @@ function renderCheckinSearch(){
       const row = document.createElement('div');
       row.className = 'list-row';
       row.style.cursor = 'pointer';
-      const nameLabel = p.category ? `${p.name} <span class="muted" style="font-size:11px;">&middot; ${p.category}</span>` : p.name;
+      const isPriority = p.category === 'VIP' || p.category === 'Speaker';
+      const priorityMark = isPriority ? '<span style="color:#D4A017;">&#9733;</span> ' : '';
+      const nameLabel = p.category ? `${priorityMark}${p.name} <span class="muted" style="font-size:11px;">&middot; ${p.category}</span>` : p.name;
       const isCheckedIn = p.status === 'checked_in';
       row.innerHTML = `<span>${nameLabel}</span><span class="badge ${isCheckedIn ? 'checked' : 'pending'}">${isCheckedIn ? 'Checked in' : 'Tap to check in'}</span>`;
       if (!isCheckedIn) row.onclick = () => checkInParticipantById(p.id);
@@ -709,7 +755,7 @@ function checkInParticipantById(participantId){
       return;
     }
     ref.update({ status: 'checked_in', checkedInAt: Date.now() }).then(() => {
-      showCheckinToast('ok', p.name, 'Checked in successfully');
+      showCheckinToast('ok', p.name, 'Checked in successfully', p.category);
       refreshScanStats();
       loadParticipants();
       renderCheckinSearch();
@@ -908,7 +954,7 @@ function processScannedCode(decodedText){
     doc.ref.update({ status: 'checked_in', checkedInAt: Date.now() }).then(() => {
       resultEl.className = 'scan-result ok';
       resultEl.innerText = `${p.name} checked in.`;
-      showCheckinToast('ok', p.name, 'Checked in successfully');
+      showCheckinToast('ok', p.name, 'Checked in successfully', p.category);
       refreshScanStats();
       loadParticipants();
       renderCheckinSearch();
@@ -917,13 +963,14 @@ function processScannedCode(decodedText){
 }
 
 let toastTimeout = null;
-function showCheckinToast(type, title, sub){
+function showCheckinToast(type, title, sub, category){
   const toast = document.getElementById('checkin-toast');
   const icon = document.getElementById('checkin-toast-icon');
   document.getElementById('checkin-toast-title').innerText = title;
-  document.getElementById('checkin-toast-sub').innerText = sub;
-  icon.innerHTML = type === 'ok' ? '&#10003;' : '&#10005;'; // checkmark / cross
-  toast.className = `checkin-toast ${type}`;
+  const isPriority = type === 'ok' && (category === 'VIP' || category === 'Speaker');
+  document.getElementById('checkin-toast-sub').innerText = isPriority ? `${category} arrived — ${sub}` : sub;
+  icon.innerHTML = type === 'ok' ? (isPriority ? '&#9733;' : '&#10003;') : '&#10005;'; // star for VIP/Speaker, checkmark, or cross
+  toast.className = `checkin-toast ${type}${isPriority ? ' priority' : ''}`;
   // Force a reflow so the pop-in animation replays even for back-to-back scans
   void toast.offsetWidth;
   toast.classList.add('show');
@@ -931,7 +978,7 @@ function showCheckinToast(type, title, sub){
   clearTimeout(toastTimeout);
   toastTimeout = setTimeout(() => {
     toast.classList.remove('show');
-  }, 2200);
+  }, isPriority ? 3200 : 2200); // give staff a bit longer to notice a VIP/speaker arrival
 }
 function refreshScanStats(){
   participantsRef().get().then(snap => {
@@ -939,7 +986,14 @@ function refreshScanStats(){
     snap.forEach(d => { total++; if (d.data().status === 'checked_in') checked++; });
     document.getElementById('stat-invited').innerText = total;
     document.getElementById('stat-checked').innerText = checked;
+    updateLiveBar(checked, total);
   });
+}
+function updateLiveBar(checked, total){
+  document.getElementById('live-checked').innerText = checked;
+  document.getElementById('live-invited').innerText = total;
+  const pct = total > 0 ? Math.round((checked / total) * 100) : 0;
+  document.getElementById('live-bar-fill').style.width = pct + '%';
 }
 
 // ---------- SUMMARY ----------
