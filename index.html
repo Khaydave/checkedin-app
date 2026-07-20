@@ -43,8 +43,13 @@
   }
   button{
     cursor:pointer; border:none; border-radius:var(--radius-pill); height:44px; font-size:14px;
-    font-weight:600; padding:0 20px;
+    font-weight:600; padding:0 20px; transition:transform 0.1s ease;
   }
+  button:active{transform:scale(0.97);}
+  .card{transition:transform 0.12s ease;}
+  .card:active{transform:scale(0.98);}
+  .list-row{transition:background 0.12s ease;}
+  .list-row[onclick]:active, .list-row[style*="cursor:pointer"]:active{background:var(--gray-50);}
   .pw-wrap{position:relative;}
   .pw-wrap input{padding-right:56px;}
   .pw-toggle{
@@ -180,6 +185,25 @@
     flex:1; height:6px; border-radius:3px; background:rgba(255,255,255,0.7); overflow:hidden;
   }
   #live-bar-fill{height:100%; width:0%; background:var(--blue-400); border-radius:3px; transition:width 0.4s ease;}
+
+  .avatar{
+    display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px;
+    border-radius:50%; color:#fff; font-size:12px; font-weight:700; margin-right:10px;
+    vertical-align:middle; flex-shrink:0;
+  }
+  .cat-badge{font-size:10px; font-weight:600; padding:2px 8px; border-radius:var(--radius-pill); margin-left:6px;}
+  .list-row{align-items:center;}
+  .list-row-left{display:flex; align-items:center; min-width:0;}
+  .list-row-left span:first-child{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  @keyframes confetti-fall{
+    0%{transform:translateY(0) rotate(0deg); opacity:1;}
+    100%{transform:translateY(100vh) rotate(540deg); opacity:0;}
+  }
+  .tab-enter{animation:tab-fade-in 0.22s ease;}
+  @keyframes tab-fade-in{
+    from{opacity:0; transform:translateY(6px);}
+    to{opacity:1; transform:translateY(0);}
+  }
   .ticket-code{background:white; border-radius:18px; padding:16px; display:inline-block; margin:12px 0;}
   .muted{color:var(--gray-500); font-size:12px;}
   .stat-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:14px 0;}
@@ -237,6 +261,7 @@
       <h1>My events</h1>
       <button class="btn-ghost" onclick="logOut()" style="height:32px; padding:0 12px; font-size:12px;">Log out</button>
     </header>
+    <p id="dashboard-greeting" class="muted" style="margin:-10px 0 16px;"></p>
     <div id="event-list"></div>
     <button class="btn-primary" onclick="showCreateEvent()">+ New event</button>
 
@@ -545,8 +570,15 @@ function createNewEvent(){
     alert('Could not create event: ' + e.message + '\n\nThis usually means Firestore security rules are not published yet, or Firestore is still in "test mode" setup. Check Firestore → Rules in the Firebase console.');
   });
 }
+function renderDashboardGreeting(){
+  const hour = new Date().getHours();
+  const timeGreeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const name = (currentUser.email || '').split('@')[0];
+  document.getElementById('dashboard-greeting').innerText = `${timeGreeting}, ${name}.`;
+}
 function loadEvents(){
   if (!currentUser) return;
+  renderDashboardGreeting();
   const list = document.getElementById('event-list');
   list.innerHTML = '<div class="mini-spinner"></div>';
   db.collection('events').where('organizerId','==',currentUser.uid).get().then(snap => {
@@ -618,7 +650,11 @@ const tabMeta = {
 function switchTab(tab){
   document.querySelectorAll('.tab-menu-item').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
-  document.getElementById('tab-' + tab).classList.remove('hidden');
+  const activeContent = document.getElementById('tab-' + tab);
+  activeContent.classList.remove('hidden');
+  activeContent.classList.remove('tab-enter');
+  void activeContent.offsetWidth; // force reflow so the animation replays every switch
+  activeContent.classList.add('tab-enter');
   document.getElementById('tab-switcher-icon').innerHTML = tabMeta[tab].icon;
   document.getElementById('tab-switcher-label').innerText = tabMeta[tab].label;
   document.getElementById('tab-menu').classList.add('hidden');
@@ -643,6 +679,31 @@ function participantsRef(){
 function uniqueCode(){
   return 'ck_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 }
+
+// ---------- SHARED DISPLAY HELPERS ----------
+const avatarPalette = ['#378ADD','#7F77DD','#639922','#BA7517','#C4433D','#2E9E9E'];
+function avatarColor(name){
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return avatarPalette[Math.abs(hash) % avatarPalette.length];
+}
+function avatarHtml(name){
+  const initial = (name || '?').trim().charAt(0).toUpperCase();
+  return `<span class="avatar" style="background:${avatarColor(name || '')};">${initial}</span>`;
+}
+const categoryColors = {
+  VIP: { bg: '#FBF0D9', text: '#9A7412' },
+  Speaker: { bg: '#EEEDFE', text: '#534AB7' },
+  Press: { bg: '#E6F1FB', text: '#185FA5' },
+  Staff: { bg: '#EAF3DE', text: '#3B6D11' },
+  General: { bg: '#F7F7F5', text: '#888780' }
+};
+function categoryBadgeHtml(category){
+  if (!category) return '';
+  const c = categoryColors[category] || categoryColors.General;
+  return `<span class="cat-badge" style="background:${c.bg}; color:${c.text};">${category}</span>`;
+}
+
 function addParticipant(){
   const name = document.getElementById('p-name').value.trim();
   const contact = document.getElementById('p-contact').value.trim();
@@ -699,8 +760,7 @@ function loadParticipants(){
       const p = doc.data();
       const row = document.createElement('div');
       row.className = 'list-row';
-      const nameLabel = p.category ? `${p.name} <span class="muted" style="font-size:11px;">&middot; ${p.category}</span>` : p.name;
-      row.innerHTML = `<span>${nameLabel}</span><span class="badge ${p.status === 'checked_in' ? 'checked' : 'pending'}">${p.status === 'checked_in' ? 'Checked in' : 'Pending'}</span>`;
+      row.innerHTML = `<span class="list-row-left">${avatarHtml(p.name)}<span>${p.name}${categoryBadgeHtml(p.category)}</span></span><span class="badge ${p.status === 'checked_in' ? 'checked' : 'pending'}">${p.status === 'checked_in' ? 'Checked in' : 'Pending'}</span>`;
       list.appendChild(row);
     });
   }).catch(e => {
@@ -736,9 +796,8 @@ function renderCheckinSearch(){
       row.style.cursor = 'pointer';
       const isPriority = p.category === 'VIP' || p.category === 'Speaker';
       const priorityMark = isPriority ? '<span style="color:#D4A017;">&#9733;</span> ' : '';
-      const nameLabel = p.category ? `${priorityMark}${p.name} <span class="muted" style="font-size:11px;">&middot; ${p.category}</span>` : p.name;
       const isCheckedIn = p.status === 'checked_in';
-      row.innerHTML = `<span>${nameLabel}</span><span class="badge ${isCheckedIn ? 'checked' : 'pending'}">${isCheckedIn ? 'Checked in' : 'Tap to check in'}</span>`;
+      row.innerHTML = `<span class="list-row-left">${avatarHtml(p.name)}<span>${priorityMark}${p.name}${categoryBadgeHtml(p.category)}</span></span><span class="badge ${isCheckedIn ? 'checked' : 'pending'}">${isCheckedIn ? 'Checked in' : 'Tap to check in'}</span>`;
       if (!isCheckedIn) row.onclick = () => checkInParticipantById(p.id);
       resultsEl.appendChild(row);
     });
@@ -989,11 +1048,37 @@ function refreshScanStats(){
     updateLiveBar(checked, total);
   });
 }
+let celebratedThisSession = false;
 function updateLiveBar(checked, total){
   document.getElementById('live-checked').innerText = checked;
   document.getElementById('live-invited').innerText = total;
   const pct = total > 0 ? Math.round((checked / total) * 100) : 0;
   document.getElementById('live-bar-fill').style.width = pct + '%';
+  if (total > 0 && checked === total && !celebratedThisSession) {
+    celebratedThisSession = true;
+    fireConfetti();
+  }
+  if (checked < total) celebratedThisSession = false; // reset if a new invite is added after full check-in
+}
+function fireConfetti(){
+  const colors = ['#378ADD', '#7F77DD', '#D4A017', '#639922'];
+  const container = document.createElement('div');
+  container.style.cssText = 'position:fixed; inset:0; pointer-events:none; z-index:1000; overflow:hidden;';
+  for (let i = 0; i < 40; i++) {
+    const piece = document.createElement('div');
+    const size = 6 + Math.random() * 6;
+    piece.style.cssText = `
+      position:absolute; top:-20px; left:${Math.random() * 100}%;
+      width:${size}px; height:${size * 0.6}px; background:${colors[i % colors.length]};
+      opacity:${0.8 + Math.random() * 0.2};
+      transform:rotate(${Math.random() * 360}deg);
+      animation:confetti-fall ${1.6 + Math.random() * 1}s ease-in forwards;
+      animation-delay:${Math.random() * 0.3}s;
+    `;
+    container.appendChild(piece);
+  }
+  document.body.appendChild(container);
+  setTimeout(() => container.remove(), 3200);
 }
 
 // ---------- SUMMARY ----------
