@@ -140,6 +140,30 @@
   @keyframes scan-line-move{
     0%{top:6%;} 50%{top:94%;} 100%{top:6%;}
   }
+
+  .splash-mark{
+    position:relative; width:64px; height:64px; margin:0 auto;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .splash-mark .splash-check{
+    font-size:24px; color:var(--blue-400); font-weight:700;
+    animation:splash-pulse 1.4s ease-in-out infinite;
+  }
+  .splash-ring{
+    position:absolute; inset:0; border-radius:50%;
+    border:3px solid var(--blue-50); border-top-color:var(--blue-400);
+    animation:splash-spin 0.9s linear infinite;
+  }
+  @keyframes splash-spin{ to{ transform:rotate(360deg); } }
+  @keyframes splash-pulse{
+    0%,100%{opacity:0.5; transform:scale(0.9);}
+    50%{opacity:1; transform:scale(1);}
+  }
+  .mini-spinner{
+    width:20px; height:20px; margin:20px auto; border-radius:50%;
+    border:2.5px solid var(--gray-200); border-top-color:var(--blue-400);
+    animation:splash-spin 0.7s linear infinite;
+  }
   .ticket-code{background:white; border-radius:18px; padding:16px; display:inline-block; margin:12px 0;}
   .muted{color:var(--gray-500); font-size:12px;}
   .stat-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:14px 0;}
@@ -158,8 +182,12 @@
 
   <!-- LOADING SPLASH — shown while Firebase checks whether you're already logged in,
        so the login form doesn't flash on screen before your session is restored. -->
-  <div id="screen-loading" class="screen center" style="padding-top:120px;">
-    <p class="muted">Loading…</p>
+  <div id="screen-loading" class="screen center" style="padding-top:140px;">
+    <div class="splash-mark">
+      <span class="splash-check">&#10003;</span>
+      <div class="splash-ring"></div>
+    </div>
+    <p class="muted" style="margin-top:18px;">Loading CheckedIn…</p>
   </div>
 
   <!-- AUTH SCREEN -->
@@ -470,9 +498,13 @@ function createNewEvent(){
 }
 function loadEvents(){
   if (!currentUser) return;
+  const list = document.getElementById('event-list');
+  list.innerHTML = '<div class="mini-spinner"></div>';
   db.collection('events').where('organizerId','==',currentUser.uid).get().then(snap => {
-    const list = document.getElementById('event-list');
     list.innerHTML = '';
+    if (snap.empty) {
+      list.innerHTML = '<p class="muted center" style="padding:20px 0;">No events yet — create your first one below.</p>';
+    }
     snap.forEach((doc, i) => {
       const e = doc.data();
       const cls = i % 2 === 0 ? '' : 'purple';
@@ -485,6 +517,7 @@ function loadEvents(){
     });
   }).catch(e => {
     console.error('loadEvents failed:', e);
+    list.innerHTML = '';
     alert('Could not load events: ' + e.message);
   });
 }
@@ -604,9 +637,13 @@ function importCsv(evt){
   });
 }
 function loadParticipants(){
+  const list = document.getElementById('participant-list');
+  list.innerHTML = '<div class="mini-spinner"></div>';
   participantsRef().orderBy('addedAt','desc').get().then(snap => {
-    const list = document.getElementById('participant-list');
     list.innerHTML = '';
+    if (snap.empty) {
+      list.innerHTML = '<p class="muted center" style="padding:14px 0;">No participants added yet.</p>';
+    }
     snap.forEach(doc => {
       const p = doc.data();
       const row = document.createElement('div');
@@ -615,6 +652,9 @@ function loadParticipants(){
       row.innerHTML = `<span>${nameLabel}</span><span class="badge ${p.status === 'checked_in' ? 'checked' : 'pending'}">${p.status === 'checked_in' ? 'Checked in' : 'Pending'}</span>`;
       list.appendChild(row);
     });
+  }).catch(e => {
+    list.innerHTML = '';
+    alert('Could not load participants: ' + e.message);
   });
 }
 
@@ -668,8 +708,9 @@ async function startScanner(){
 async function launchCamera(deviceId){
   setScannerStatus('Starting camera…');
   const base = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'environment' };
-  // A smaller feed is plenty for QR decoding and starts up + processes much faster than full HD.
-  const constraints = { video: { ...base, width: { ideal: 640 }, height: { ideal: 480 } } };
+  // Higher detail than before — cropping to the viewfinder (below) keeps this fast
+  // while giving the QR code more pixels to lock onto, which actually speeds up detection.
+  const constraints = { video: { ...base, width: { ideal: 1280 }, height: { ideal: 720 } } };
 
   try {
     if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
@@ -711,11 +752,9 @@ async function scanLoop(){
     return;
   }
 
-  // Throttle the jsQR fallback path to ~15fps — running full pixel analysis at 60fps
-  // burns CPU without improving detection speed, and can actually slow phones down.
+  // ~20fps is plenty for detection and keeps phones from overheating/throttling under sustained scanning.
   const now = performance.now();
-  const minInterval = barcodeDetector ? 0 : 66;
-  if (now - lastFrameAt < minInterval) {
+  if (now - lastFrameAt < 50) {
     scanLoopId = requestAnimationFrame(scanLoop);
     return;
   }
@@ -724,18 +763,24 @@ async function scanLoop(){
   try {
     let code = null;
 
+    // Crop to just the on-screen viewfinder square (70% of the shorter video dimension,
+    // matching .scan-frame in the CSS) before running detection on it. Scanning only the
+    // relevant area — instead of the whole frame, most of which is background — is the
+    // single biggest speed win: far less data to search per frame, for both engines below.
+    const side = Math.round(Math.min(video.videoWidth, video.videoHeight) * 0.7);
+    const sx = Math.round((video.videoWidth - side) / 2);
+    const sy = Math.round((video.videoHeight - side) / 2);
+    const outSize = 380; // fixed, modest output size keeps jsQR fast regardless of camera resolution
+    canvas.width = outSize;
+    canvas.height = outSize;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(video, sx, sy, side, side, 0, 0, outSize, outSize);
+
     if (barcodeDetector) {
-      const results = await barcodeDetector.detect(video);
+      const results = await barcodeDetector.detect(canvas);
       if (results.length) code = results[0].rawValue;
     } else {
-      // jsQR fallback: draw a downscaled frame to a canvas and analyze the raw pixels.
-      // Downscaling keeps getImageData/decode fast — full camera resolution isn't needed to read a QR code.
-      const scale = Math.min(1, 480 / video.videoWidth);
-      canvas.width = Math.round(video.videoWidth * scale);
-      canvas.height = Math.round(video.videoHeight * scale);
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, outSize, outSize);
       // dontInvert skips a redundant second decode pass — most printed/on-screen QR codes are dark-on-light.
       const result = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
       if (result) code = result.data;
