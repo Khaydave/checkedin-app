@@ -246,7 +246,7 @@
       </button>
       <div class="tab-menu hidden" id="tab-menu">
         <div class="tab-menu-item active" data-tab="participants" onclick="switchTab('participants')"><span>&#128101;</span> Participants</div>
-        <div class="tab-menu-item" data-tab="scanner" onclick="switchTab('scanner')"><span>&#128247;</span> Scanner</div>
+        <div class="tab-menu-item" data-tab="scanner" onclick="switchTab('scanner')"><span>&#9989;</span> Check-in</div>
         <div class="tab-menu-item" data-tab="export" onclick="switchTab('export')"><span>&#8595;</span> Export</div>
         <div class="tab-menu-item" data-tab="summary" onclick="switchTab('summary')"><span>&#128202;</span> Summary</div>
       </div>
@@ -286,28 +286,35 @@
 
     <!-- Scanner tab -->
     <div id="tab-scanner" class="tab-content hidden">
-      <p id="scanner-status" class="muted" style="margin-bottom:8px;">Starting camera…</p>
-      <select id="camera-select" class="hidden" onchange="switchCamera()" style="margin-bottom:10px;"></select>
-      <div id="qr-reader" style="width:100%; position:relative; border-radius:16px; overflow:hidden; background:#000;">
-        <video id="scanner-video" playsinline muted style="width:100%; display:block;"></video>
-        <canvas id="scanner-canvas" class="hidden"></canvas>
-        <div class="scan-frame">
-          <span class="scan-corner tl"></span>
-          <span class="scan-corner tr"></span>
-          <span class="scan-corner bl"></span>
-          <span class="scan-corner br"></span>
-          <div class="scan-line"></div>
-        </div>
-      </div>
-      <div id="scan-result" class="scan-result hidden"></div>
+      <input id="checkin-search" placeholder="Search guest by name or phone…" oninput="renderCheckinSearch()" />
+      <div id="checkin-search-results"></div>
 
-      <div style="margin-top:16px;">
-        <p class="muted" style="cursor:pointer; text-decoration:underline;" onclick="document.getElementById('manual-entry').classList.toggle('hidden')">Camera not working? Enter code manually</p>
-        <div id="manual-entry" class="hidden" style="display:flex; gap:8px; margin-top:8px;">
-          <input id="manual-code" placeholder="Paste or type the participant code" style="margin-bottom:0;" />
-          <button class="btn-primary" style="width:auto; white-space:nowrap;" onclick="manualCheckIn()">Check in</button>
+      <p class="muted" style="cursor:pointer; text-decoration:underline; margin:14px 0 0;" onclick="toggleQrScanner()">Prefer scanning a QR code instead? <span id="qr-toggle-label">Open camera</span></p>
+
+      <div id="qr-scanner-block" class="hidden" style="margin-top:12px;">
+        <p id="scanner-status" class="muted" style="margin-bottom:8px;">Starting camera…</p>
+        <select id="camera-select" class="hidden" onchange="switchCamera()" style="margin-bottom:10px;"></select>
+        <div id="qr-reader" style="width:100%; position:relative; border-radius:16px; overflow:hidden; background:#000;">
+          <video id="scanner-video" playsinline muted style="width:100%; display:block;"></video>
+          <canvas id="scanner-canvas" class="hidden"></canvas>
+          <div class="scan-frame">
+            <span class="scan-corner tl"></span>
+            <span class="scan-corner tr"></span>
+            <span class="scan-corner bl"></span>
+            <span class="scan-corner br"></span>
+            <div class="scan-line"></div>
+          </div>
+        </div>
+        <div style="margin-top:12px;">
+          <p class="muted" style="cursor:pointer; text-decoration:underline;" onclick="document.getElementById('manual-entry').classList.toggle('hidden')">Camera not working? Enter code manually</p>
+          <div id="manual-entry" class="hidden" style="display:flex; gap:8px; margin-top:8px;">
+            <input id="manual-code" placeholder="Paste or type the participant code" style="margin-bottom:0;" />
+            <button class="btn-primary" style="width:auto; white-space:nowrap;" onclick="manualCheckIn()">Check in</button>
+          </div>
         </div>
       </div>
+
+      <div id="scan-result" class="scan-result hidden"></div>
 
       <div class="stat-grid">
         <div class="stat card"><p>Checked in</p><h3 id="stat-checked">0</h3></div>
@@ -561,7 +568,7 @@ window.addEventListener('popstate', (e) => {
 });
 const tabMeta = {
   participants: { icon: '&#128101;', label: 'Participants' },
-  scanner: { icon: '&#128247;', label: 'Scanner' },
+  scanner: { icon: '&#9989;', label: 'Check-in' },
   export: { icon: '&#8595;', label: 'Export' },
   summary: { icon: '&#128202;', label: 'Summary' }
 };
@@ -572,7 +579,7 @@ function switchTab(tab){
   document.getElementById('tab-switcher-icon').innerHTML = tabMeta[tab].icon;
   document.getElementById('tab-switcher-label').innerText = tabMeta[tab].label;
   document.getElementById('tab-menu').classList.add('hidden');
-  if (tab === 'scanner') { startScanner(); } else { stopScanner(); }
+  if (tab === 'scanner') { refreshScanStats(); renderCheckinSearch(); } else { stopScanner(); }
   if (tab === 'summary') loadSummary();
 }
 function toggleTabMenu(){
@@ -658,7 +665,68 @@ function loadParticipants(){
   });
 }
 
-// ---------- SCANNER ----------
+// ---------- SEARCH-AND-TAP CHECK-IN (primary method — no camera needed) ----------
+let allParticipantsCache = [];
+
+function renderCheckinSearch(){
+  const query = (document.getElementById('checkin-search').value || '').trim().toLowerCase();
+  const resultsEl = document.getElementById('checkin-search-results');
+
+  participantsRef().get().then(snap => {
+    allParticipantsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const matches = query
+      ? allParticipantsCache.filter(p =>
+          p.name.toLowerCase().includes(query) ||
+          (p.contact || '').toLowerCase().includes(query)
+        )
+      : allParticipantsCache.slice(0, 8); // show a handful by default so the list isn't empty
+
+    resultsEl.innerHTML = '';
+    if (!matches.length) {
+      resultsEl.innerHTML = '<p class="muted center" style="padding:14px 0;">No matching guest found.</p>';
+      return;
+    }
+    matches.forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'list-row';
+      row.style.cursor = 'pointer';
+      const nameLabel = p.category ? `${p.name} <span class="muted" style="font-size:11px;">&middot; ${p.category}</span>` : p.name;
+      const isCheckedIn = p.status === 'checked_in';
+      row.innerHTML = `<span>${nameLabel}</span><span class="badge ${isCheckedIn ? 'checked' : 'pending'}">${isCheckedIn ? 'Checked in' : 'Tap to check in'}</span>`;
+      if (!isCheckedIn) row.onclick = () => checkInParticipantById(p.id);
+      resultsEl.appendChild(row);
+    });
+  });
+}
+
+function checkInParticipantById(participantId){
+  const ref = participantsRef().doc(participantId);
+  ref.get().then(doc => {
+    const p = doc.data();
+    if (!p) return;
+    if (p.status === 'checked_in') {
+      showCheckinToast('err', p.name, 'Already checked in');
+      return;
+    }
+    ref.update({ status: 'checked_in', checkedInAt: Date.now() }).then(() => {
+      showCheckinToast('ok', p.name, 'Checked in successfully');
+      refreshScanStats();
+      loadParticipants();
+      renderCheckinSearch();
+    }).catch(e => alert('Could not check in: ' + e.message));
+  });
+}
+
+function toggleQrScanner(){
+  const block = document.getElementById('qr-scanner-block');
+  const label = document.getElementById('qr-toggle-label');
+  const opening = block.classList.contains('hidden');
+  block.classList.toggle('hidden');
+  label.innerText = opening ? 'Close camera' : 'Open camera';
+  if (opening) { startScanner(); } else { stopScanner(); }
+}
+
+// ---------- SCANNER (secondary/optional check-in method) ----------
 let mediaStream = null;
 let scanLoopId = null;
 let barcodeDetector = null;
@@ -843,6 +911,7 @@ function processScannedCode(decodedText){
       showCheckinToast('ok', p.name, 'Checked in successfully');
       refreshScanStats();
       loadParticipants();
+      renderCheckinSearch();
     });
   });
 }
