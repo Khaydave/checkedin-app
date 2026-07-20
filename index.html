@@ -91,6 +91,33 @@
   .scan-result{border-radius:16px; padding:14px; margin-top:14px; font-size:13px;}
   .scan-result.ok{background:var(--green-100); color:#3B6D11;}
   .scan-result.err{background:#FCEBEB; color:#791F1F;}
+
+  .checkin-toast{
+    position:fixed; top:50%; left:50%; transform:translate(-50%,-50%) scale(0.7);
+    z-index:999; background:#fff; border-radius:24px; padding:28px 32px;
+    box-shadow:0 16px 40px rgba(0,0,0,0.25); text-align:center; min-width:220px;
+    opacity:0; pointer-events:none; transition:opacity 0.18s ease, transform 0.18s ease;
+  }
+  .checkin-toast.show{opacity:1; transform:translate(-50%,-50%) scale(1); animation:toast-pop 0.35s cubic-bezier(.34,1.56,.64,1);}
+  @keyframes toast-pop{
+    0%{transform:translate(-50%,-50%) scale(0.6); opacity:0;}
+    60%{transform:translate(-50%,-50%) scale(1.06); opacity:1;}
+    100%{transform:translate(-50%,-50%) scale(1); opacity:1;}
+  }
+  .checkin-toast-icon{
+    width:56px; height:56px; border-radius:50%; margin:0 auto 12px;
+    display:flex; align-items:center; justify-content:center; font-size:28px; color:#fff;
+  }
+  .checkin-toast.ok .checkin-toast-icon{background:var(--green-500); animation:icon-pop 0.4s ease 0.05s both;}
+  .checkin-toast.err .checkin-toast-icon{background:#C4433D; animation:icon-shake 0.4s ease;}
+  @keyframes icon-pop{
+    0%{transform:scale(0);} 70%{transform:scale(1.15);} 100%{transform:scale(1);}
+  }
+  @keyframes icon-shake{
+    0%,100%{transform:translateX(0);} 25%{transform:translateX(-5px);} 75%{transform:translateX(5px);}
+  }
+  .checkin-toast-title{font-size:16px; font-weight:600; margin:0 0 2px; color:var(--gray-900);}
+  .checkin-toast-sub{font-size:12px; color:var(--gray-500); margin:0;}
   .ticket-code{background:white; border-radius:18px; padding:16px; display:inline-block; margin:12px 0;}
   .muted{color:var(--gray-500); font-size:12px;}
   .stat-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:14px 0;}
@@ -99,6 +126,14 @@
 </head>
 <body>
 <div class="app">
+
+  <!-- Check-in toast (pops up over everything on scan/manual check-in) -->
+  <div id="checkin-toast" class="checkin-toast hidden">
+    <div class="checkin-toast-icon" id="checkin-toast-icon"></div>
+    <p class="checkin-toast-title" id="checkin-toast-title"></p>
+    <p class="checkin-toast-sub" id="checkin-toast-sub"></p>
+  </div>
+
 
   <!-- AUTH SCREEN -->
   <div id="screen-auth" class="screen">
@@ -666,6 +701,7 @@ function processScannedCode(decodedText){
     if (snap.empty) {
       resultEl.className = 'scan-result err';
       resultEl.innerText = 'Code not recognized for this event.';
+      showCheckinToast('err', 'Not recognized', 'This code isn\'t on the guest list for this event.');
       return;
     }
     const doc = snap.docs[0];
@@ -673,15 +709,35 @@ function processScannedCode(decodedText){
     if (p.status === 'checked_in') {
       resultEl.className = 'scan-result err';
       resultEl.innerText = `${p.name} already checked in.`;
+      showCheckinToast('err', p.name, 'Already checked in');
       return;
     }
     doc.ref.update({ status: 'checked_in', checkedInAt: Date.now() }).then(() => {
       resultEl.className = 'scan-result ok';
       resultEl.innerText = `${p.name} checked in.`;
+      showCheckinToast('ok', p.name, 'Checked in successfully');
       refreshScanStats();
       loadParticipants();
     });
   });
+}
+
+let toastTimeout = null;
+function showCheckinToast(type, title, sub){
+  const toast = document.getElementById('checkin-toast');
+  const icon = document.getElementById('checkin-toast-icon');
+  document.getElementById('checkin-toast-title').innerText = title;
+  document.getElementById('checkin-toast-sub').innerText = sub;
+  icon.innerHTML = type === 'ok' ? '&#10003;' : '&#10005;'; // checkmark / cross
+  toast.className = `checkin-toast ${type}`;
+  // Force a reflow so the pop-in animation replays even for back-to-back scans
+  void toast.offsetWidth;
+  toast.classList.add('show');
+
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => {
+    toast.classList.remove('show');
+  }, 2200);
 }
 function refreshScanStats(){
   participantsRef().get().then(snap => {
