@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CheckedIn — Event QR Check-in</title>
+
+<!-- Firebase (compat SDK, easiest for a single-file app) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+<!-- QR generation -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<!-- QR scanning (camera) -->
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<!-- CSV import/export -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<!-- ZIP export of QR images -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+<style>
+  :root{
+    --blue-50:#E6F1FB; --blue-100:#B5D4F4; --blue-400:#378ADD; --blue-600:#185FA5; --blue-800:#0C447C;
+    --purple-50:#EEEDFE; --purple-100:#CECBF6; --purple-400:#7F77DD; --purple-600:#534AB7; --purple-800:#3C3489;
+    --green-500:#639922; --green-100:#EAF3DE; --amber-500:#BA7517; --amber-100:#FAEEDA;
+    --gray-50:#F7F7F5; --gray-200:#E4E2DA; --gray-500:#888780; --gray-900:#2C2C2A;
+    --radius:14px; --radius-pill:999px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--gray-50); color:var(--gray-900);
+  }
+  .app{max-width:480px; margin:0 auto; min-height:100vh; background:#fff; box-shadow:0 0 24px rgba(0,0,0,0.06); padding-bottom:80px;}
+  header{padding:20px; display:flex; align-items:center; justify-content:space-between;}
+  header h1{font-size:18px; font-weight:600; margin:0;}
+  .screen{padding:0 20px;}
+  input, select{
+    width:100%; height:44px; border-radius:var(--radius-pill); border:1px solid var(--gray-200);
+    padding:0 16px; font-size:14px; margin-bottom:10px; background:#fafaf8;
+  }
+  button{
+    cursor:pointer; border:none; border-radius:var(--radius-pill); height:44px; font-size:14px;
+    font-weight:600; padding:0 20px;
+  }
+  .btn-primary{background:var(--blue-400); color:#fff; width:100%;}
+  .btn-secondary{background:var(--purple-50); color:var(--purple-800); width:100%;}
+  .btn-ghost{background:transparent; border:1px solid var(--gray-200); color:var(--gray-900);}
+  .card{background:var(--blue-50); border-radius:20px; padding:16px; margin-bottom:12px;}
+  .card.purple{background:var(--purple-50);}
+  .card h3{margin:0 0 4px; font-size:15px; color:var(--blue-800);}
+  .card.purple h3{color:var(--purple-800);}
+  .card p{margin:0; font-size:12px; color:var(--blue-600);}
+  .card.purple p{color:var(--purple-600);}
+  .progress{height:6px; background:rgba(255,255,255,0.6); border-radius:3px; overflow:hidden; margin-top:10px;}
+  .progress > div{height:100%; background:var(--blue-600); border-radius:3px;}
+  .list-row{display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--gray-200); font-size:13px;}
+  .badge{font-size:10px; padding:3px 10px; border-radius:var(--radius-pill); font-weight:600;}
+  .badge.pending{background:var(--amber-100); color:var(--amber-500);}
+  .badge.checked{background:var(--green-100); color:var(--green-500);}
+  .tabs{display:flex; gap:6px; margin:16px 0; overflow-x:auto;}
+  .tab{padding:8px 14px; border-radius:var(--radius-pill); font-size:12px; font-weight:600; background:var(--gray-50); color:var(--gray-500); white-space:nowrap; cursor:pointer;}
+  .tab.active{background:var(--blue-400); color:#fff;}
+  .hidden{display:none !important;}
+  .center{text-align:center;}
+  #qr-reader{border-radius:16px; overflow:hidden;}
+  .scan-result{border-radius:16px; padding:14px; margin-top:14px; font-size:13px;}
+  .scan-result.ok{background:var(--green-100); color:#3B6D11;}
+  .scan-result.err{background:#FCEBEB; color:#791F1F;}
+  .ticket-code{background:white; border-radius:18px; padding:16px; display:inline-block; margin:12px 0;}
+  .muted{color:var(--gray-500); font-size:12px;}
+  .stat-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:14px 0;}
+  .stat{border-radius:16px; padding:13px;}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- AUTH SCREEN -->
+  <div id="screen-auth" class="screen">
+    <header><h1>CheckedIn</h1></header>
+    <p class="muted center" style="margin-bottom:20px;">Verify who actually showed up.</p>
+    <input id="auth-email" type="email" placeholder="name@company.com" />
+    <input id="auth-password" type="password" placeholder="Password" />
+    <button class="btn-primary" onclick="signIn()">Log in</button>
+    <button class="btn-ghost" style="width:100%; margin-top:8px;" onclick="signUp()">Create account</button>
+    <p id="auth-error" class="muted" style="color:#A32D2D;"></p>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div id="screen-dashboard" class="screen hidden">
+    <header>
+      <h1>My events</h1>
+      <button class="btn-ghost" onclick="logOut()" style="height:32px; padding:0 12px; font-size:12px;">Log out</button>
+    </header>
+    <div id="event-list"></div>
+    <button class="btn-primary" onclick="showCreateEvent()">+ New event</button>
+
+    <div id="create-event-form" class="hidden" style="margin-top:16px;">
+      <input id="new-event-title" placeholder="Event title" />
+      <input id="new-event-date" type="date" />
+      <button class="btn-primary" onclick="createEvent()">Create event</button>
+    </div>
+  </div>
+
+  <!-- EVENT DETAIL -->
+  <div id="screen-event" class="screen hidden">
+    <header>
+      <h1 id="event-title-header">Event</h1>
+      <button class="btn-ghost" onclick="backToDashboard()" style="height:32px; padding:0 12px; font-size:12px;">Back</button>
+    </header>
+
+    <div class="tabs">
+      <div class="tab active" data-tab="participants" onclick="switchTab('participants')">Participants</div>
+      <div class="tab" data-tab="scanner" onclick="switchTab('scanner')">Scanner</div>
+      <div class="tab" data-tab="export" onclick="switchTab('export')">Export</div>
+      <div class="tab" data-tab="summary" onclick="switchTab('summary')">Summary</div>
+    </div>
+
+    <!-- Participants tab -->
+    <div id="tab-participants" class="tab-content">
+      <input id="p-name" placeholder="Full name" />
+      <input id="p-contact" placeholder="Phone or email" />
+      <button class="btn-primary" onclick="addParticipant()">Add participant</button>
+      <div class="card purple" style="margin-top:12px; display:flex; align-items:center; justify-content:space-between; cursor:pointer;" onclick="document.getElementById('csv-input').click()">
+        <div>
+          <h3 style="margin:0;">Import from CSV</h3>
+          <p>Columns: name, contact</p>
+        </div>
+        <span>&#8593;</span>
+      </div>
+      <input type="file" id="csv-input" accept=".csv" class="hidden" onchange="importCsv(event)" />
+      <div id="participant-list" style="margin-top:16px;"></div>
+    </div>
+
+    <!-- Scanner tab -->
+    <div id="tab-scanner" class="tab-content hidden">
+      <div id="qr-reader" style="width:100%;"></div>
+      <div id="scan-result" class="scan-result hidden"></div>
+      <div class="stat-grid">
+        <div class="stat card"><p>Checked in</p><h3 id="stat-checked">0</h3></div>
+        <div class="stat card purple"><p>Invited</p><h3 id="stat-invited">0</h3></div>
+      </div>
+    </div>
+
+    <!-- Export tab -->
+    <div id="tab-export" class="tab-content hidden">
+      <div class="card" style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;" onclick="exportCsv()">
+        <div><h3>CSV list</h3><p>Names, contacts, status</p></div><span>&#8595;</span>
+      </div>
+      <div class="card purple" style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;" onclick="exportZip()">
+        <div><h3>All QR codes (zip)</h3><p>One PNG per participant</p></div><span>&#8595;</span>
+      </div>
+      <div class="card" style="opacity:0.6; background:var(--gray-50);">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <h3 style="color:var(--gray-500);">Email all invites</h3>
+          <span class="badge pending">Coming soon</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary tab -->
+    <div id="tab-summary" class="tab-content hidden">
+      <div class="stat-grid">
+        <div class="stat card"><p>Invited</p><h3 id="sum-invited">0</h3></div>
+        <div class="stat card purple"><p>Checked in</p><h3 id="sum-checked">0</h3></div>
+      </div>
+      <p class="muted" style="margin-bottom:8px;">Recent check-ins</p>
+      <div id="recent-checkins"></div>
+    </div>
+  </div>
+
+  <!-- PARTICIPANT TICKET (shareable, opened via ?ticket=eventId:participantId) -->
+  <div id="screen-ticket" class="screen hidden center">
+    <header><h1>Your ticket</h1></header>
+    <div class="card" id="ticket-card">
+      <h3 id="ticket-event"></h3>
+      <p id="ticket-name" style="font-size:18px; font-weight:600; color:var(--blue-800); margin:6px 0 0;"></p>
+      <div class="ticket-code" id="ticket-qr"></div>
+      <p class="muted">Present this code at entry</p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* =========================================================
+   FIREBASE CONFIG
+   Replace with your own project keys (Firebase Console →
+   Project settings → General → Your apps → SDK config).
+   Same pattern as the Ledger app project.
+   ========================================================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyAd5behTFEAekFygXKKTNKaAR9dMz3TFxc",
+  authDomain: "checkedin-app-be94a.firebaseapp.com",
+  projectId: "checkedin-app-be94a",
+  storageBucket: "checkedin-app-be94a.firebasestorage.app",
+  messagingSenderId: "653931545519",
+  appId: "1:653931545519:web:8be21b29b84c3d2215655a"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+/* =========================================================
+   FIRESTORE SCHEMA
+   organizers/{uid}
+   events/{eventId}                { organizerId, title, date }
+   events/{eventId}/participants/{participantId}
+        { name, contact, uniqueCode, status: "pending"|"checked_in", checkedInAt }
+
+   FIRESTORE RULES (set these in Firebase Console before real use):
+   ---------------------------------------------------------
+   match /events/{eventId} {
+     allow read, write: if request.auth.uid == resource.data.organizerId
+        || request.auth.uid == request.resource.data.organizerId;
+     match /participants/{pid} {
+       allow read: if true; // needed so a participant can load their own ticket link
+       allow write: if get(/databases/$(database)/documents/events/$(eventId)).data.organizerId == request.auth.uid;
+     }
+   }
+   ========================================================= */
+
+let currentUser = null;
+let currentEventId = null;
+let currentEventTitle = "";
+let html5QrScanner = null;
+
+// ---------- AUTH ----------
+function signUp(){
+  const email = document.getElementById('auth-email').value;
+  const pw = document.getElementById('auth-password').value;
+  auth.createUserWithEmailAndPassword(email, pw).catch(e => showAuthError(e));
+}
+function signIn(){
+  const email = document.getElementById('auth-email').value;
+  const pw = document.getElementById('auth-password').value;
+  auth.signInWithEmailAndPassword(email, pw).catch(e => showAuthError(e));
+}
+function logOut(){ auth.signOut(); }
+function showAuthError(e){ document.getElementById('auth-error').innerText = e.message; }
+
+auth.onAuthStateChanged(user => {
+  currentUser = user;
+  if (user) {
+    document.getElementById('screen-auth').classList.add('hidden');
+    document.getElementById('screen-dashboard').classList.remove('hidden');
+    loadEvents();
+  } else {
+    document.getElementById('screen-auth').classList.remove('hidden');
+    document.getElementById('screen-dashboard').classList.add('hidden');
+    document.getElementById('screen-event').classList.add('hidden');
+  }
+});
+
+// ---------- DASHBOARD / EVENTS ----------
+function showCreateEvent(){
+  document.getElementById('create-event-form').classList.toggle('hidden');
+}
+function createEvent(){
+  const title = document.getElementById('new-event-title').value.trim();
+  const date = document.getElementById('new-event-date').value;
+  if (!title) return;
+  db.collection('events').add({
+    organizerId: currentUser.uid, title, date, createdAt: Date.now()
+  }).then(() => {
+    document.getElementById('new-event-title').value = '';
+    document.getElementById('new-event-date').value = '';
+    document.getElementById('create-event-form').classList.add('hidden');
+    loadEvents();
+  });
+}
+function loadEvents(){
+  db.collection('events').where('organizerId','==',currentUser.uid).get().then(snap => {
+    const list = document.getElementById('event-list');
+    list.innerHTML = '';
+    snap.forEach((doc, i) => {
+      const e = doc.data();
+      const cls = i % 2 === 0 ? '' : 'purple';
+      const div = document.createElement('div');
+      div.className = `card ${cls}`;
+      div.style.cursor = 'pointer';
+      div.onclick = () => openEvent(doc.id, e.title);
+      div.innerHTML = `<h3>${e.title}</h3><p>${e.date || 'No date set'}</p>`;
+      list.appendChild(div);
+    });
+  });
+}
+function backToDashboard(){
+  if (html5QrScanner) { html5QrScanner.stop().catch(()=>{}); html5QrScanner = null; }
+  document.getElementById('screen-event').classList.add('hidden');
+  document.getElementById('screen-dashboard').classList.remove('hidden');
+  loadEvents();
+}
+
+// ---------- EVENT DETAIL ----------
+function openEvent(eventId, title){
+  currentEventId = eventId;
+  currentEventTitle = title;
+  document.getElementById('event-title-header').innerText = title;
+  document.getElementById('screen-dashboard').classList.add('hidden');
+  document.getElementById('screen-event').classList.remove('hidden');
+  switchTab('participants');
+  loadParticipants();
+}
+function switchTab(tab){
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+  document.getElementById('tab-' + tab).classList.remove('hidden');
+  if (tab === 'scanner') startScanner();
+  if (tab === 'summary') loadSummary();
+}
+
+// ---------- PARTICIPANTS ----------
+function participantsRef(){
+  return db.collection('events').doc(currentEventId).collection('participants');
+}
+function uniqueCode(){
+  return 'ck_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+}
+function addParticipant(){
+  const name = document.getElementById('p-name').value.trim();
+  const contact = document.getElementById('p-contact').value.trim();
+  if (!name) return;
+  participantsRef().add({
+    name, contact, uniqueCode: uniqueCode(), status: 'pending', addedAt: Date.now()
+  }).then(() => {
+    document.getElementById('p-name').value = '';
+    document.getElementById('p-contact').value = '';
+    loadParticipants();
+  });
+}
+function importCsv(evt){
+  const file = evt.target.files[0];
+  if (!file) return;
+  Papa.parse(file, {
+    header: true, skipEmptyLines: true,
+    complete: results => {
+      const batch = db.batch();
+      results.data.forEach(row => {
+        const name = row.name || row.Name;
+        const contact = row.contact || row.Contact || '';
+        if (!name) return;
+        const ref = participantsRef().doc();
+        batch.set(ref, { name, contact, uniqueCode: uniqueCode(), status: 'pending', addedAt: Date.now() });
+      });
+      batch.commit().then(loadParticipants);
+    }
+  });
+}
+function loadParticipants(){
+  participantsRef().orderBy('addedAt','desc').get().then(snap => {
+    const list = document.getElementById('participant-list');
+    list.innerHTML = '';
+    snap.forEach(doc => {
+      const p = doc.data();
+      const row = document.createElement('div');
+      row.className = 'list-row';
+      row.innerHTML = `<span>${p.name}</span><span class="badge ${p.status === 'checked_in' ? 'checked' : 'pending'}">${p.status === 'checked_in' ? 'Checked in' : 'Pending'}</span>`;
+      list.appendChild(row);
+    });
+  });
+}
+
+// ---------- SCANNER ----------
+function startScanner(){
+  const el = document.getElementById('qr-reader');
+  if (html5QrScanner) return;
+  html5QrScanner = new Html5Qrcode('qr-reader');
+  html5QrScanner.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: 220 },
+    onScanSuccess
+  ).catch(err => console.error('Camera start failed', err));
+  refreshScanStats();
+}
+function onScanSuccess(decodedText){
+  participantsRef().where('uniqueCode','==',decodedText).get().then(snap => {
+    const resultEl = document.getElementById('scan-result');
+    resultEl.classList.remove('hidden');
+    if (snap.empty) {
+      resultEl.className = 'scan-result err';
+      resultEl.innerText = 'Code not recognized for this event.';
+      return;
+    }
+    const doc = snap.docs[0];
+    const p = doc.data();
+    if (p.status === 'checked_in') {
+      resultEl.className = 'scan-result err';
+      resultEl.innerText = `${p.name} already checked in.`;
+      return;
+    }
+    doc.ref.update({ status: 'checked_in', checkedInAt: Date.now() }).then(() => {
+      resultEl.className = 'scan-result ok';
+      resultEl.innerText = `${p.name} checked in.`;
+      refreshScanStats();
+      loadParticipants();
+    });
+  });
+}
+function refreshScanStats(){
+  participantsRef().get().then(snap => {
+    let total = 0, checked = 0;
+    snap.forEach(d => { total++; if (d.data().status === 'checked_in') checked++; });
+    document.getElementById('stat-invited').innerText = total;
+    document.getElementById('stat-checked').innerText = checked;
+  });
+}
+
+// ---------- SUMMARY ----------
+function loadSummary(){
+  participantsRef().orderBy('checkedInAt','desc').get().then(snap => {
+    let total = 0, checked = 0;
+    const recent = document.getElementById('recent-checkins');
+    recent.innerHTML = '';
+    snap.forEach(d => {
+      const p = d.data();
+      total++;
+      if (p.status === 'checked_in') {
+        checked++;
+        if (recent.children.length < 5) {
+          const row = document.createElement('div');
+          row.className = 'list-row';
+          row.innerText = `${p.name}`;
+          recent.appendChild(row);
+        }
+      }
+    });
+    document.getElementById('sum-invited').innerText = total;
+    document.getElementById('sum-checked').innerText = checked;
+  });
+}
+
+// ---------- EXPORT ----------
+function exportCsv(){
+  participantsRef().get().then(snap => {
+    const rows = [['name','contact','status','uniqueCode']];
+    snap.forEach(d => {
+      const p = d.data();
+      rows.push([p.name, p.contact || '', p.status, p.uniqueCode]);
+    });
+    const csv = Papa.unparse(rows);
+    const blob = new Blob([csv], { type: 'text/csv' });
+    saveAs(blob, `${currentEventTitle}-participants.csv`);
+  });
+}
+function exportZip(){
+  participantsRef().get().then(async snap => {
+    const zip = new JSZip();
+    const promises = [];
+    snap.forEach(doc => {
+      const p = doc.data();
+      promises.push(new Promise(resolve => {
+        const tempDiv = document.createElement('div');
+        new QRCode(tempDiv, { text: p.uniqueCode, width: 300, height: 300 });
+        setTimeout(() => {
+          const img = tempDiv.querySelector('img') || tempDiv.querySelector('canvas');
+          const dataUrl = img.tagName === 'CANVAS' ? img.toDataURL('image/png') : img.src;
+          const base64 = dataUrl.split(',')[1];
+          zip.file(`${p.name.replace(/[^a-z0-9]/gi,'_')}.png`, base64, { base64: true });
+          resolve();
+        }, 100);
+      }));
+    });
+    await Promise.all(promises);
+    zip.generateAsync({ type: 'blob' }).then(blob => saveAs(blob, `${currentEventTitle}-qrcodes.zip`));
+  });
+}
+
+// ---------- STANDALONE TICKET VIEW (?ticket=eventId:participantId) ----------
+(function checkTicketLink(){
+  const params = new URLSearchParams(window.location.search);
+  const ticket = params.get('ticket');
+  if (!ticket) return;
+  const [eventId, participantId] = ticket.split(':');
+  document.getElementById('screen-auth').classList.add('hidden');
+  document.getElementById('screen-ticket').classList.remove('hidden');
+  db.collection('events').doc(eventId).get().then(eventDoc => {
+    db.collection('events').doc(eventId).collection('participants').doc(participantId).get().then(pDoc => {
+      const p = pDoc.data();
+      document.getElementById('ticket-event').innerText = eventDoc.data().title;
+      document.getElementById('ticket-name').innerText = p.name;
+      new QRCode(document.getElementById('ticket-qr'), { text: p.uniqueCode, width: 200, height: 200 });
+    });
+  });
+})();
+</script>
+</body>
+</html>
