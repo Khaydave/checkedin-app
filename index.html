@@ -12,8 +12,8 @@
 
 <!-- QR generation -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<!-- QR scanning (camera) -->
-<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<!-- QR scanning (camera) — jsQR as a fallback; native BarcodeDetector used first when the browser supports it -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
 <!-- CSV import/export -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <!-- ZIP export of QR images -->
@@ -198,7 +198,10 @@
     <div id="tab-scanner" class="tab-content hidden">
       <p id="scanner-status" class="muted" style="margin-bottom:8px;">Starting camera…</p>
       <select id="camera-select" class="hidden" onchange="switchCamera()" style="margin-bottom:10px;"></select>
-      <div id="qr-reader" style="width:100%;"></div>
+      <div id="qr-reader" style="width:100%; position:relative; border-radius:16px; overflow:hidden; background:#000;">
+        <video id="scanner-video" playsinline muted style="width:100%; display:block;"></video>
+        <canvas id="scanner-canvas" class="hidden"></canvas>
+      </div>
       <div id="scan-result" class="scan-result hidden"></div>
 
       <div style="margin-top:16px;">
@@ -296,7 +299,6 @@ const db = firebase.firestore();
 let currentUser = null;
 let currentEventId = null;
 let currentEventTitle = "";
-let html5QrScanner = null;
 
 // ---------- AUTH ----------
 let authMode = 'signin'; // 'signin' | 'signup'
@@ -417,7 +419,7 @@ function loadEvents(){
   });
 }
 function backToDashboard(){
-  if (html5QrScanner) { html5QrScanner.stop().catch(()=>{}); html5QrScanner = null; }
+  stopScanner();
   document.getElementById('screen-event').classList.add('hidden');
   document.getElementById('screen-dashboard').classList.remove('hidden');
   loadEvents();
@@ -446,7 +448,7 @@ function switchTab(tab){
   document.getElementById('tab-switcher-icon').innerHTML = tabMeta[tab].icon;
   document.getElementById('tab-switcher-label').innerText = tabMeta[tab].label;
   document.getElementById('tab-menu').classList.add('hidden');
-  if (tab === 'scanner') startScanner();
+  if (tab === 'scanner') { startScanner(); } else { stopScanner(); }
   if (tab === 'summary') loadSummary();
 }
 function toggleTabMenu(){
@@ -526,62 +528,128 @@ function loadParticipants(){
 }
 
 // ---------- SCANNER ----------
-let availableCameras = [];
+let mediaStream = null;
+let scanLoopId = null;
+let barcodeDetector = null;
+let lastScannedCode = null;
+let lastScannedAt = 0;
 
 function setScannerStatus(text){
   const el = document.getElementById('scanner-status');
   if (el) el.innerText = text;
 }
 
-function startScanner(){
-  if (html5QrScanner) return;
-  html5QrScanner = new Html5Qrcode('qr-reader');
-  setScannerStatus('Looking for cameras…');
-  refreshScanStats();
+async function startScanner(){
+  if (mediaStream) return; // already running
+  setScannerStatus('Requesting camera access…');
 
-  Html5Qrcode.getCameras().then(cameras => {
-    availableCameras = cameras || [];
-    if (!availableCameras.length) {
-      setScannerStatus('No camera found on this device. Use manual entry below instead.');
-      return;
+  // Native BarcodeDetector — fast, built into the browser, supported on most
+  // Android Chrome / Edge. We fall back to jsQR (below) if it's unavailable.
+  if ('BarcodeDetector' in window) {
+    try {
+      const formats = await BarcodeDetector.getSupportedFormats();
+      if (formats.includes('qr_code')) {
+        barcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
+      }
+    } catch (e) {
+      barcodeDetector = null;
     }
-    // Populate the camera dropdown if there's more than one (e.g. front + back)
+  }
+
+  try {
+    // List cameras first so we can offer a picker and target the back camera specifically.
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cameras = devices.filter(d => d.kind === 'videoinput');
     const select = document.getElementById('camera-select');
-    if (availableCameras.length > 1) {
-      select.innerHTML = availableCameras.map((c, i) => `<option value="${c.id}">${c.label || 'Camera ' + (i + 1)}</option>`).join('');
+    if (cameras.length > 1) {
+      select.innerHTML = cameras.map((c, i) => `<option value="${c.deviceId}">${c.label || 'Camera ' + (i + 1)}</option>`).join('');
       select.classList.remove('hidden');
     }
-    // Prefer a rear/back camera by label if we can find one, otherwise use the last camera (often the back one on phones)
-    const backCam = availableCameras.find(c => /back|rear|environment/i.test(c.label));
-    const chosenId = (backCam || availableCameras[availableCameras.length - 1]).id;
-    if (availableCameras.length > 1) select.value = chosenId;
-    launchCamera(chosenId);
-  }).catch(err => {
-    console.error('Camera list failed', err);
-    setScannerStatus('Could not access the camera (permission blocked, or camera unavailable). Use manual entry below instead.');
-  });
+    const backCam = cameras.find(c => /back|rear/i.test(c.label));
+    const deviceId = backCam ? backCam.deviceId : (cameras[cameras.length - 1] || {}).deviceId;
+    await launchCamera(deviceId);
+  } catch (err) {
+    console.error('Camera setup failed', err);
+    setScannerStatus('Could not access the camera: ' + (err.message || err) + '. Use manual entry below.');
+  }
 }
 
-function launchCamera(cameraId){
+async function launchCamera(deviceId){
   setScannerStatus('Starting camera…');
-  html5QrScanner.start(
-    cameraId,
-    { fps: 10, qrbox: 220 },
-    onScanSuccess,
-    () => {} // per-frame "no QR code found yet" callback — must exist or the scan loop breaks after the first empty frame
-  ).then(() => {
-    setScannerStatus('Point the camera at a participant\'s QR code.');
-  }).catch(err => {
+  const constraints = deviceId
+    ? { video: { deviceId: { exact: deviceId } } }
+    : { video: { facingMode: 'environment' } };
+
+  try {
+    if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+    mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+    const video = document.getElementById('scanner-video');
+    video.srcObject = mediaStream;
+    await video.play();
+    setScannerStatus(barcodeDetector
+      ? 'Point the camera at a participant\'s QR code.'
+      : 'Point the camera at a participant\'s QR code. (Using fallback scanner — may be slightly slower.)');
+    scanLoop();
+  } catch (err) {
     console.error('Camera start failed', err);
     setScannerStatus('Camera failed to start: ' + (err.message || err) + '. Use manual entry below instead.');
-  });
+  }
 }
 
 function switchCamera(){
   const select = document.getElementById('camera-select');
-  const newId = select.value;
-  if (!html5QrScanner) return;
-  html5QrScanner.stop().then(() => launchCamera(newId)).catch(() => launchCamera(newId));
+  launchCamera(select.value);
+}
+
+async function scanLoop(){
+  const video = document.getElementById('scanner-video');
+  const canvas = document.getElementById('scanner-canvas');
+
+  if (!mediaStream || video.readyState !== video.HAVE_ENOUGH_DATA) {
+    scanLoopId = requestAnimationFrame(scanLoop);
+    return;
+  }
+
+  try {
+    let code = null;
+
+    if (barcodeDetector) {
+      const results = await barcodeDetector.detect(video);
+      if (results.length) code = results[0].rawValue;
+    } else {
+      // jsQR fallback: draw the current frame to a canvas and analyze the raw pixels
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const result = jsQR(imageData.data, imageData.width, imageData.height);
+      if (result) code = result.data;
+    }
+
+    if (code) {
+      const now = Date.now();
+      // Debounce: ignore the same code re-firing every frame while it's still in view
+      if (code !== lastScannedCode || now - lastScannedAt > 3000) {
+        lastScannedCode = code;
+        lastScannedAt = now;
+        processScannedCode(code);
+      }
+    }
+  } catch (e) {
+    console.error('Scan frame error', e);
+  }
+
+  scanLoopId = requestAnimationFrame(scanLoop);
+}
+
+function stopScanner(){
+  if (scanLoopId) cancelAnimationFrame(scanLoopId);
+  scanLoopId = null;
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(t => t.stop());
+    mediaStream = null;
+  }
 }
 
 function manualCheckIn(){
@@ -589,10 +657,6 @@ function manualCheckIn(){
   if (!code) return;
   processScannedCode(code);
   document.getElementById('manual-code').value = '';
-}
-
-function onScanSuccess(decodedText){
-  processScannedCode(decodedText);
 }
 
 function processScannedCode(decodedText){
