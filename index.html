@@ -166,11 +166,27 @@
     <div id="tab-participants" class="tab-content">
       <input id="p-name" placeholder="Full name" />
       <input id="p-contact" placeholder="Phone or email" />
+
+      <p class="muted" style="cursor:pointer; text-decoration:underline; margin:0 0 10px;" onclick="document.getElementById('p-more-details').classList.toggle('hidden')">+ Add more details</p>
+
+      <div id="p-more-details" class="hidden">
+        <select id="p-category">
+          <option value="">Category (optional)</option>
+          <option value="General">General</option>
+          <option value="VIP">VIP</option>
+          <option value="Speaker">Speaker</option>
+          <option value="Press">Press</option>
+          <option value="Staff">Staff</option>
+        </select>
+        <input id="p-organization" placeholder="Organization / company (optional)" />
+        <input id="p-notes" placeholder="Notes (optional)" />
+      </div>
+
       <button class="btn-primary" onclick="addParticipant()">Add participant</button>
       <div class="card purple" style="margin-top:12px; display:flex; align-items:center; justify-content:space-between; cursor:pointer;" onclick="document.getElementById('csv-input').click()">
         <div>
           <h3 style="margin:0;">Import from CSV</h3>
-          <p>Columns: name, contact</p>
+          <p>Columns: name, contact, category, organization, notes</p>
         </div>
         <span>&#8593;</span>
       </div>
@@ -443,12 +459,19 @@ function uniqueCode(){
 function addParticipant(){
   const name = document.getElementById('p-name').value.trim();
   const contact = document.getElementById('p-contact').value.trim();
+  const category = document.getElementById('p-category').value;
+  const organization = document.getElementById('p-organization').value.trim();
+  const notes = document.getElementById('p-notes').value.trim();
   if (!name) { alert('Enter a participant name first.'); return; }
   participantsRef().add({
-    name, contact, uniqueCode: uniqueCode(), status: 'pending', addedAt: Date.now()
+    name, contact, category, organization, notes,
+    uniqueCode: uniqueCode(), status: 'pending', addedAt: Date.now()
   }).then(() => {
     document.getElementById('p-name').value = '';
     document.getElementById('p-contact').value = '';
+    document.getElementById('p-category').value = '';
+    document.getElementById('p-organization').value = '';
+    document.getElementById('p-notes').value = '';
     loadParticipants();
   }).catch(e => {
     console.error('addParticipant failed:', e);
@@ -465,11 +488,14 @@ function importCsv(evt){
       results.data.forEach(row => {
         const name = row.name || row.Name;
         const contact = row.contact || row.Contact || '';
+        const category = row.category || row.Category || '';
+        const organization = row.organization || row.Organization || row.company || row.Company || '';
+        const notes = row.notes || row.Notes || '';
         if (!name) return;
         const ref = participantsRef().doc();
-        batch.set(ref, { name, contact, uniqueCode: uniqueCode(), status: 'pending', addedAt: Date.now() });
+        batch.set(ref, { name, contact, category, organization, notes, uniqueCode: uniqueCode(), status: 'pending', addedAt: Date.now() });
       });
-      batch.commit().then(loadParticipants);
+      batch.commit().then(loadParticipants).catch(e => alert('CSV import failed: ' + e.message));
     }
   });
 }
@@ -481,7 +507,8 @@ function loadParticipants(){
       const p = doc.data();
       const row = document.createElement('div');
       row.className = 'list-row';
-      row.innerHTML = `<span>${p.name}</span><span class="badge ${p.status === 'checked_in' ? 'checked' : 'pending'}">${p.status === 'checked_in' ? 'Checked in' : 'Pending'}</span>`;
+      const nameLabel = p.category ? `${p.name} <span class="muted" style="font-size:11px;">&middot; ${p.category}</span>` : p.name;
+      row.innerHTML = `<span>${nameLabel}</span><span class="badge ${p.status === 'checked_in' ? 'checked' : 'pending'}">${p.status === 'checked_in' ? 'Checked in' : 'Pending'}</span>`;
       list.appendChild(row);
     });
   });
@@ -495,7 +522,8 @@ function startScanner(){
   html5QrScanner.start(
     { facingMode: 'environment' },
     { fps: 10, qrbox: 220 },
-    onScanSuccess
+    onScanSuccess,
+    () => {} // per-frame "no QR code found yet" callback — must exist or the scan loop breaks after the first empty frame
   ).catch(err => console.error('Camera start failed', err));
   refreshScanStats();
 }
@@ -559,15 +587,15 @@ function loadSummary(){
 // ---------- EXPORT ----------
 function exportCsv(){
   participantsRef().get().then(snap => {
-    const rows = [['name','contact','status','uniqueCode']];
+    const rows = [['name','contact','category','organization','notes','status','uniqueCode']];
     snap.forEach(d => {
       const p = d.data();
-      rows.push([p.name, p.contact || '', p.status, p.uniqueCode]);
+      rows.push([p.name, p.contact || '', p.category || '', p.organization || '', p.notes || '', p.status, p.uniqueCode]);
     });
     const csv = Papa.unparse(rows);
     const blob = new Blob([csv], { type: 'text/csv' });
     saveAs(blob, `${currentEventTitle}-participants.csv`);
-  });
+  }).catch(e => alert('Could not export CSV: ' + e.message));
 }
 function exportZip(){
   participantsRef().get().then(async snap => {
