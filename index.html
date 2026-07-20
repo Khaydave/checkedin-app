@@ -118,6 +118,28 @@
   }
   .checkin-toast-title{font-size:16px; font-weight:600; margin:0 0 2px; color:var(--gray-900);}
   .checkin-toast-sub{font-size:12px; color:var(--gray-500); margin:0;}
+
+  .scan-frame{
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:70%; aspect-ratio:1/1; max-width:220px; pointer-events:none; opacity:0;
+    transition:opacity 0.2s ease;
+  }
+  #qr-reader.scanning .scan-frame{opacity:1;}
+  .scan-corner{
+    position:absolute; width:24px; height:24px; border:3px solid var(--blue-400); opacity:0.95;
+  }
+  .scan-corner.tl{top:0; left:0; border-right:none; border-bottom:none; border-radius:8px 0 0 0;}
+  .scan-corner.tr{top:0; right:0; border-left:none; border-bottom:none; border-radius:0 8px 0 0;}
+  .scan-corner.bl{bottom:0; left:0; border-right:none; border-top:none; border-radius:0 0 0 8px;}
+  .scan-corner.br{bottom:0; right:0; border-left:none; border-top:none; border-radius:0 0 8px 0;}
+  .scan-line{
+    position:absolute; left:4%; right:4%; height:2px; background:var(--blue-400);
+    box-shadow:0 0 8px 1px var(--blue-400); border-radius:2px;
+    animation:scan-line-move 1.4s ease-in-out infinite;
+  }
+  @keyframes scan-line-move{
+    0%{top:6%;} 50%{top:94%;} 100%{top:6%;}
+  }
   .ticket-code{background:white; border-radius:18px; padding:16px; display:inline-block; margin:12px 0;}
   .muted{color:var(--gray-500); font-size:12px;}
   .stat-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:14px 0;}
@@ -134,9 +156,14 @@
     <p class="checkin-toast-sub" id="checkin-toast-sub"></p>
   </div>
 
+  <!-- LOADING SPLASH — shown while Firebase checks whether you're already logged in,
+       so the login form doesn't flash on screen before your session is restored. -->
+  <div id="screen-loading" class="screen center" style="padding-top:120px;">
+    <p class="muted">Loading…</p>
+  </div>
 
   <!-- AUTH SCREEN -->
-  <div id="screen-auth" class="screen">
+  <div id="screen-auth" class="screen hidden">
     <header><h1>CheckedIn</h1></header>
     <p class="muted center" style="margin-bottom:20px;">Verify who actually showed up.</p>
 
@@ -236,6 +263,13 @@
       <div id="qr-reader" style="width:100%; position:relative; border-radius:16px; overflow:hidden; background:#000;">
         <video id="scanner-video" playsinline muted style="width:100%; display:block;"></video>
         <canvas id="scanner-canvas" class="hidden"></canvas>
+        <div class="scan-frame">
+          <span class="scan-corner tl"></span>
+          <span class="scan-corner tr"></span>
+          <span class="scan-corner bl"></span>
+          <span class="scan-corner br"></span>
+          <div class="scan-line"></div>
+        </div>
       </div>
       <div id="scan-result" class="scan-result hidden"></div>
 
@@ -401,6 +435,7 @@ function clearAuthError(){ document.getElementById('auth-error').innerText = '';
 
 auth.onAuthStateChanged(user => {
   currentUser = user;
+  document.getElementById('screen-loading').classList.add('hidden');
   if (user) {
     document.getElementById('screen-auth').classList.add('hidden');
     document.getElementById('screen-dashboard').classList.remove('hidden');
@@ -453,11 +488,19 @@ function loadEvents(){
     alert('Could not load events: ' + e.message);
   });
 }
-function backToDashboard(){
+// Renders the dashboard UI. Called either from the in-app Back button
+// (via history.back(), see below) or from the phone's back button (via popstate).
+function goToDashboardUI(){
   stopScanner();
   document.getElementById('screen-event').classList.add('hidden');
   document.getElementById('screen-dashboard').classList.remove('hidden');
   loadEvents();
+}
+// The in-app Back button just asks the browser to go back one step —
+// the actual UI update happens in the popstate listener below, so both
+// the in-app button and the phone's hardware/gesture back button behave identically.
+function backToDashboard(){
+  history.back();
 }
 
 // ---------- EVENT DETAIL ----------
@@ -469,7 +512,20 @@ function openEvent(eventId, title){
   document.getElementById('screen-event').classList.remove('hidden');
   switchTab('participants');
   loadParticipants();
+  // Push a history entry so the phone's back button lands on the dashboard
+  // instead of leaving/reloading the whole app.
+  history.pushState({ screen: 'event', eventId }, '', '#event/' + eventId);
 }
+
+// Phone back button / browser back button handler
+window.addEventListener('popstate', (e) => {
+  if (currentUser && (!e.state || e.state.screen !== 'event')) {
+    // Only act if we're actually leaving the event screen
+    if (!document.getElementById('screen-event').classList.contains('hidden')) {
+      goToDashboardUI();
+    }
+  }
+});
 const tabMeta = {
   participants: { icon: '&#128101;', label: 'Participants' },
   scanner: { icon: '&#128247;', label: 'Scanner' },
@@ -611,19 +667,28 @@ async function startScanner(){
 
 async function launchCamera(deviceId){
   setScannerStatus('Starting camera…');
-  const constraints = deviceId
-    ? { video: { deviceId: { exact: deviceId } } }
-    : { video: { facingMode: 'environment' } };
+  const base = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'environment' };
+  // A smaller feed is plenty for QR decoding and starts up + processes much faster than full HD.
+  const constraints = { video: { ...base, width: { ideal: 640 }, height: { ideal: 480 } } };
 
   try {
     if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
     mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+    // Nudge continuous autofocus on if the device supports it — keeps the QR sharp without manual tapping.
+    const [track] = mediaStream.getVideoTracks();
+    const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+    if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
+      track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+    }
+
     const video = document.getElementById('scanner-video');
     video.srcObject = mediaStream;
     await video.play();
     setScannerStatus(barcodeDetector
-      ? 'Point the camera at a participant\'s QR code.'
-      : 'Point the camera at a participant\'s QR code. (Using fallback scanner — may be slightly slower.)');
+      ? 'Scanning…'
+      : 'Scanning… (fallback mode)');
+    document.getElementById('qr-reader').classList.add('scanning');
     scanLoop();
   } catch (err) {
     console.error('Camera start failed', err);
@@ -636,6 +701,7 @@ function switchCamera(){
   launchCamera(select.value);
 }
 
+let lastFrameAt = 0;
 async function scanLoop(){
   const video = document.getElementById('scanner-video');
   const canvas = document.getElementById('scanner-canvas');
@@ -645,6 +711,16 @@ async function scanLoop(){
     return;
   }
 
+  // Throttle the jsQR fallback path to ~15fps — running full pixel analysis at 60fps
+  // burns CPU without improving detection speed, and can actually slow phones down.
+  const now = performance.now();
+  const minInterval = barcodeDetector ? 0 : 66;
+  if (now - lastFrameAt < minInterval) {
+    scanLoopId = requestAnimationFrame(scanLoop);
+    return;
+  }
+  lastFrameAt = now;
+
   try {
     let code = null;
 
@@ -652,22 +728,25 @@ async function scanLoop(){
       const results = await barcodeDetector.detect(video);
       if (results.length) code = results[0].rawValue;
     } else {
-      // jsQR fallback: draw the current frame to a canvas and analyze the raw pixels
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
+      // jsQR fallback: draw a downscaled frame to a canvas and analyze the raw pixels.
+      // Downscaling keeps getImageData/decode fast — full camera resolution isn't needed to read a QR code.
+      const scale = Math.min(1, 480 / video.videoWidth);
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const result = jsQR(imageData.data, imageData.width, imageData.height);
+      // dontInvert skips a redundant second decode pass — most printed/on-screen QR codes are dark-on-light.
+      const result = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
       if (result) code = result.data;
     }
 
     if (code) {
-      const now = Date.now();
+      const sinceLast = Date.now();
       // Debounce: ignore the same code re-firing every frame while it's still in view
-      if (code !== lastScannedCode || now - lastScannedAt > 3000) {
+      if (code !== lastScannedCode || sinceLast - lastScannedAt > 3000) {
         lastScannedCode = code;
-        lastScannedAt = now;
+        lastScannedAt = sinceLast;
         processScannedCode(code);
       }
     }
@@ -679,6 +758,7 @@ async function scanLoop(){
 }
 
 function stopScanner(){
+  document.getElementById('qr-reader').classList.remove('scanning');
   if (scanLoopId) cancelAnimationFrame(scanLoopId);
   scanLoopId = null;
   if (mediaStream) {
@@ -833,6 +913,7 @@ function exportZip(){
   const ticket = params.get('ticket');
   if (!ticket) return;
   const [eventId, participantId] = ticket.split(':');
+  document.getElementById('screen-loading').classList.add('hidden');
   document.getElementById('screen-auth').classList.add('hidden');
   document.getElementById('screen-ticket').classList.remove('hidden');
   db.collection('events').doc(eventId).get().then(eventDoc => {
