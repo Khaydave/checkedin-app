@@ -66,9 +66,25 @@
   .badge{font-size:10px; padding:3px 10px; border-radius:var(--radius-pill); font-weight:600;}
   .badge.pending{background:var(--amber-100); color:var(--amber-500);}
   .badge.checked{background:var(--green-100); color:var(--green-500);}
-  .tabs{display:flex; gap:6px; margin:16px 0; overflow-x:auto;}
-  .tab{padding:8px 14px; border-radius:var(--radius-pill); font-size:12px; font-weight:600; background:var(--gray-50); color:var(--gray-500); white-space:nowrap; cursor:pointer;}
-  .tab.active{background:var(--blue-400); color:#fff;}
+  .tab-switcher{position:relative; margin:16px 0;}
+  .tab-switcher-btn{
+    width:100%; display:flex; align-items:center; gap:8px; justify-content:flex-start;
+    background:var(--blue-50); color:var(--blue-800); border-radius:16px; height:46px;
+    padding:0 16px; font-size:14px; font-weight:600;
+  }
+  .tab-switcher-icon{font-size:15px;}
+  .tab-switcher-chevron{margin-left:auto; font-size:12px; color:var(--blue-600);}
+  .tab-menu{
+    position:absolute; top:52px; left:0; right:0; background:#fff; border-radius:16px;
+    box-shadow:0 8px 24px rgba(0,0,0,0.12); border:1px solid var(--gray-200); overflow:hidden; z-index:10;
+  }
+  .tab-menu-item{
+    display:flex; align-items:center; gap:10px; padding:12px 16px; font-size:13px; font-weight:500;
+    color:var(--gray-900); cursor:pointer;
+  }
+  .tab-menu-item:hover{background:var(--gray-50);}
+  .tab-menu-item.active{background:var(--blue-50); color:var(--blue-800); font-weight:600;}
+  .tab-menu-item + .tab-menu-item{border-top:1px solid var(--gray-200);}
   .hidden{display:none !important;}
   .center{text-align:center;}
   #qr-reader{border-radius:16px; overflow:hidden;}
@@ -132,11 +148,18 @@
       <button class="btn-ghost" onclick="backToDashboard()" style="height:32px; padding:0 12px; font-size:12px;">Back</button>
     </header>
 
-    <div class="tabs">
-      <div class="tab active" data-tab="participants" onclick="switchTab('participants')">Participants</div>
-      <div class="tab" data-tab="scanner" onclick="switchTab('scanner')">Scanner</div>
-      <div class="tab" data-tab="export" onclick="switchTab('export')">Export</div>
-      <div class="tab" data-tab="summary" onclick="switchTab('summary')">Summary</div>
+    <div class="tab-switcher">
+      <button class="tab-switcher-btn" id="tab-switcher-btn" onclick="toggleTabMenu()">
+        <span class="tab-switcher-icon" id="tab-switcher-icon">&#128101;</span>
+        <span id="tab-switcher-label">Participants</span>
+        <span class="tab-switcher-chevron">&#9662;</span>
+      </button>
+      <div class="tab-menu hidden" id="tab-menu">
+        <div class="tab-menu-item active" data-tab="participants" onclick="switchTab('participants')"><span>&#128101;</span> Participants</div>
+        <div class="tab-menu-item" data-tab="scanner" onclick="switchTab('scanner')"><span>&#128247;</span> Scanner</div>
+        <div class="tab-menu-item" data-tab="export" onclick="switchTab('export')"><span>&#8595;</span> Export</div>
+        <div class="tab-menu-item" data-tab="summary" onclick="switchTab('summary')"><span>&#128202;</span> Summary</div>
+      </div>
     </div>
 
     <!-- Participants tab -->
@@ -336,11 +359,11 @@ function createNewEvent(){
   if (!currentUser) { alert('You are not signed in — please log in again.'); return; }
   db.collection('events').add({
     organizerId: currentUser.uid, title, date, createdAt: Date.now()
-  }).then(() => {
+  }).then(docRef => {
     document.getElementById('new-event-title').value = '';
     document.getElementById('new-event-date').value = '';
     document.getElementById('create-event-form').classList.add('hidden');
-    loadEvents();
+    openEvent(docRef.id, title); // jump straight into the new event, no extra click needed
   }).catch(e => {
     console.error('createNewEvent failed:', e);
     alert('Could not create event: ' + e.message + '\n\nThis usually means Firestore security rules are not published yet, or Firestore is still in "test mode" setup. Check Firestore → Rules in the Firebase console.');
@@ -383,13 +406,32 @@ function openEvent(eventId, title){
   switchTab('participants');
   loadParticipants();
 }
+const tabMeta = {
+  participants: { icon: '&#128101;', label: 'Participants' },
+  scanner: { icon: '&#128247;', label: 'Scanner' },
+  export: { icon: '&#8595;', label: 'Export' },
+  summary: { icon: '&#128202;', label: 'Summary' }
+};
 function switchTab(tab){
-  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.querySelectorAll('.tab-menu-item').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
   document.getElementById('tab-' + tab).classList.remove('hidden');
+  document.getElementById('tab-switcher-icon').innerHTML = tabMeta[tab].icon;
+  document.getElementById('tab-switcher-label').innerText = tabMeta[tab].label;
+  document.getElementById('tab-menu').classList.add('hidden');
   if (tab === 'scanner') startScanner();
   if (tab === 'summary') loadSummary();
 }
+function toggleTabMenu(){
+  document.getElementById('tab-menu').classList.toggle('hidden');
+}
+// Close the dropdown if the person taps anywhere outside it
+document.addEventListener('click', e => {
+  const switcher = document.querySelector('.tab-switcher');
+  if (switcher && !switcher.contains(e.target)) {
+    document.getElementById('tab-menu').classList.add('hidden');
+  }
+});
 
 // ---------- PARTICIPANTS ----------
 function participantsRef(){
