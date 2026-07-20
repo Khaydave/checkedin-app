@@ -196,8 +196,19 @@
 
     <!-- Scanner tab -->
     <div id="tab-scanner" class="tab-content hidden">
+      <p id="scanner-status" class="muted" style="margin-bottom:8px;">Starting camera…</p>
+      <select id="camera-select" class="hidden" onchange="switchCamera()" style="margin-bottom:10px;"></select>
       <div id="qr-reader" style="width:100%;"></div>
       <div id="scan-result" class="scan-result hidden"></div>
+
+      <div style="margin-top:16px;">
+        <p class="muted" style="cursor:pointer; text-decoration:underline;" onclick="document.getElementById('manual-entry').classList.toggle('hidden')">Camera not working? Enter code manually</p>
+        <div id="manual-entry" class="hidden" style="display:flex; gap:8px; margin-top:8px;">
+          <input id="manual-code" placeholder="Paste or type the participant code" style="margin-bottom:0;" />
+          <button class="btn-primary" style="width:auto; white-space:nowrap;" onclick="manualCheckIn()">Check in</button>
+        </div>
+      </div>
+
       <div class="stat-grid">
         <div class="stat card"><p>Checked in</p><h3 id="stat-checked">0</h3></div>
         <div class="stat card purple"><p>Invited</p><h3 id="stat-invited">0</h3></div>
@@ -515,19 +526,76 @@ function loadParticipants(){
 }
 
 // ---------- SCANNER ----------
+let availableCameras = [];
+
+function setScannerStatus(text){
+  const el = document.getElementById('scanner-status');
+  if (el) el.innerText = text;
+}
+
 function startScanner(){
-  const el = document.getElementById('qr-reader');
   if (html5QrScanner) return;
   html5QrScanner = new Html5Qrcode('qr-reader');
+  setScannerStatus('Looking for cameras…');
+  refreshScanStats();
+
+  Html5Qrcode.getCameras().then(cameras => {
+    availableCameras = cameras || [];
+    if (!availableCameras.length) {
+      setScannerStatus('No camera found on this device. Use manual entry below instead.');
+      return;
+    }
+    // Populate the camera dropdown if there's more than one (e.g. front + back)
+    const select = document.getElementById('camera-select');
+    if (availableCameras.length > 1) {
+      select.innerHTML = availableCameras.map((c, i) => `<option value="${c.id}">${c.label || 'Camera ' + (i + 1)}</option>`).join('');
+      select.classList.remove('hidden');
+    }
+    // Prefer a rear/back camera by label if we can find one, otherwise use the last camera (often the back one on phones)
+    const backCam = availableCameras.find(c => /back|rear|environment/i.test(c.label));
+    const chosenId = (backCam || availableCameras[availableCameras.length - 1]).id;
+    if (availableCameras.length > 1) select.value = chosenId;
+    launchCamera(chosenId);
+  }).catch(err => {
+    console.error('Camera list failed', err);
+    setScannerStatus('Could not access the camera (permission blocked, or camera unavailable). Use manual entry below instead.');
+  });
+}
+
+function launchCamera(cameraId){
+  setScannerStatus('Starting camera…');
   html5QrScanner.start(
-    { facingMode: 'environment' },
+    cameraId,
     { fps: 10, qrbox: 220 },
     onScanSuccess,
     () => {} // per-frame "no QR code found yet" callback — must exist or the scan loop breaks after the first empty frame
-  ).catch(err => console.error('Camera start failed', err));
-  refreshScanStats();
+  ).then(() => {
+    setScannerStatus('Point the camera at a participant\'s QR code.');
+  }).catch(err => {
+    console.error('Camera start failed', err);
+    setScannerStatus('Camera failed to start: ' + (err.message || err) + '. Use manual entry below instead.');
+  });
 }
+
+function switchCamera(){
+  const select = document.getElementById('camera-select');
+  const newId = select.value;
+  if (!html5QrScanner) return;
+  html5QrScanner.stop().then(() => launchCamera(newId)).catch(() => launchCamera(newId));
+}
+
+function manualCheckIn(){
+  const code = document.getElementById('manual-code').value.trim();
+  if (!code) return;
+  processScannedCode(code);
+  document.getElementById('manual-code').value = '';
+}
+
 function onScanSuccess(decodedText){
+  processScannedCode(decodedText);
+}
+
+function processScannedCode(decodedText){
   participantsRef().where('uniqueCode','==',decodedText).get().then(snap => {
     const resultEl = document.getElementById('scan-result');
     resultEl.classList.remove('hidden');
