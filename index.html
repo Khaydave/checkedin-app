@@ -45,6 +45,12 @@
     cursor:pointer; border:none; border-radius:var(--radius-pill); height:44px; font-size:14px;
     font-weight:600; padding:0 20px;
   }
+  .pw-wrap{position:relative;}
+  .pw-wrap input{padding-right:56px;}
+  .pw-toggle{
+    position:absolute; right:16px; top:50%; transform:translateY(-50%);
+    font-size:12px; font-weight:600; color:var(--blue-600); cursor:pointer;
+  }
   .btn-primary{background:var(--blue-400); color:#fff; width:100%;}
   .btn-secondary{background:var(--purple-50); color:var(--purple-800); width:100%;}
   .btn-ghost{background:transparent; border:1px solid var(--gray-200); color:var(--gray-900);}
@@ -82,10 +88,24 @@
   <div id="screen-auth" class="screen">
     <header><h1>CheckedIn</h1></header>
     <p class="muted center" style="margin-bottom:20px;">Verify who actually showed up.</p>
+
     <input id="auth-email" type="email" placeholder="name@company.com" />
-    <input id="auth-password" type="password" placeholder="Password" />
-    <button class="btn-primary" onclick="signIn()">Log in</button>
-    <button class="btn-ghost" style="width:100%; margin-top:8px;" onclick="signUp()">Create account</button>
+
+    <div class="pw-wrap">
+      <input id="auth-password" type="password" placeholder="Password" />
+      <span class="pw-toggle" onclick="togglePw('auth-password', this)">Show</span>
+    </div>
+
+    <!-- Only shown during sign-up, to confirm the password -->
+    <div class="pw-wrap hidden" id="confirm-pw-wrap">
+      <input id="auth-password-confirm" type="password" placeholder="Confirm password" />
+      <span class="pw-toggle" onclick="togglePw('auth-password-confirm', this)">Show</span>
+    </div>
+
+    <button class="btn-primary" id="auth-primary-btn" onclick="signIn()">Log in</button>
+    <button class="btn-ghost" style="width:100%; margin-top:8px;" id="auth-toggle-btn" onclick="toggleAuthMode()">Create account instead</button>
+
+    <p class="muted center" style="margin-top:14px; cursor:pointer; text-decoration:underline;" onclick="forgotPassword()">Forgot password?</p>
     <p id="auth-error" class="muted" style="color:#A32D2D;"></p>
   </div>
 
@@ -229,18 +249,68 @@ let currentEventTitle = "";
 let html5QrScanner = null;
 
 // ---------- AUTH ----------
+let authMode = 'signin'; // 'signin' | 'signup'
+
+function toggleAuthMode(){
+  authMode = authMode === 'signin' ? 'signup' : 'signin';
+  const confirmWrap = document.getElementById('confirm-pw-wrap');
+  const primaryBtn = document.getElementById('auth-primary-btn');
+  const toggleBtn = document.getElementById('auth-toggle-btn');
+  clearAuthError();
+  if (authMode === 'signup') {
+    confirmWrap.classList.remove('hidden');
+    primaryBtn.innerText = 'Create account';
+    primaryBtn.setAttribute('onclick', 'signUp()');
+    toggleBtn.innerText = 'Already have an account? Log in';
+  } else {
+    confirmWrap.classList.add('hidden');
+    primaryBtn.innerText = 'Log in';
+    primaryBtn.setAttribute('onclick', 'signIn()');
+    toggleBtn.innerText = 'Create account instead';
+  }
+}
+
+function togglePw(inputId, toggleEl){
+  const input = document.getElementById(inputId);
+  const isHidden = input.type === 'password';
+  input.type = isHidden ? 'text' : 'password';
+  toggleEl.innerText = isHidden ? 'Hide' : 'Show';
+}
+
 function signUp(){
-  const email = document.getElementById('auth-email').value;
+  clearAuthError();
+  const email = document.getElementById('auth-email').value.trim();
   const pw = document.getElementById('auth-password').value;
+  const pwConfirm = document.getElementById('auth-password-confirm').value;
+
+  if (!email || !pw) { showAuthError({ message: 'Enter an email and password.' }); return; }
+  if (pw.length < 6) { showAuthError({ message: 'Password must be at least 6 characters.' }); return; }
+  if (pw !== pwConfirm) { showAuthError({ message: 'Passwords do not match.' }); return; }
+
   auth.createUserWithEmailAndPassword(email, pw).catch(e => showAuthError(e));
 }
 function signIn(){
-  const email = document.getElementById('auth-email').value;
+  clearAuthError();
+  const email = document.getElementById('auth-email').value.trim();
   const pw = document.getElementById('auth-password').value;
+  if (!email || !pw) { showAuthError({ message: 'Enter your email and password.' }); return; }
   auth.signInWithEmailAndPassword(email, pw).catch(e => showAuthError(e));
 }
+function forgotPassword(){
+  clearAuthError();
+  const email = document.getElementById('auth-email').value.trim();
+  if (!email) { showAuthError({ message: 'Enter your email above first, then tap "Forgot password?" again.' }); return; }
+  auth.sendPasswordResetEmail(email)
+    .then(() => showAuthError({ message: 'Password reset email sent — check your inbox.' }, true))
+    .catch(e => showAuthError(e));
+}
 function logOut(){ auth.signOut(); }
-function showAuthError(e){ document.getElementById('auth-error').innerText = e.message; }
+function showAuthError(e, isSuccess){
+  const el = document.getElementById('auth-error');
+  el.innerText = e.message;
+  el.style.color = isSuccess ? 'var(--green-500)' : '#A32D2D';
+}
+function clearAuthError(){ document.getElementById('auth-error').innerText = ''; }
 
 auth.onAuthStateChanged(user => {
   currentUser = user;
@@ -262,7 +332,8 @@ function showCreateEvent(){
 function createEvent(){
   const title = document.getElementById('new-event-title').value.trim();
   const date = document.getElementById('new-event-date').value;
-  if (!title) return;
+  if (!title) { alert('Enter an event title first.'); return; }
+  if (!currentUser) { alert('You are not signed in — please log in again.'); return; }
   db.collection('events').add({
     organizerId: currentUser.uid, title, date, createdAt: Date.now()
   }).then(() => {
@@ -270,9 +341,13 @@ function createEvent(){
     document.getElementById('new-event-date').value = '';
     document.getElementById('create-event-form').classList.add('hidden');
     loadEvents();
+  }).catch(e => {
+    console.error('createEvent failed:', e);
+    alert('Could not create event: ' + e.message + '\n\nThis usually means Firestore security rules are not published yet, or Firestore is still in "test mode" setup. Check Firestore → Rules in the Firebase console.');
   });
 }
 function loadEvents(){
+  if (!currentUser) return;
   db.collection('events').where('organizerId','==',currentUser.uid).get().then(snap => {
     const list = document.getElementById('event-list');
     list.innerHTML = '';
@@ -286,6 +361,9 @@ function loadEvents(){
       div.innerHTML = `<h3>${e.title}</h3><p>${e.date || 'No date set'}</p>`;
       list.appendChild(div);
     });
+  }).catch(e => {
+    console.error('loadEvents failed:', e);
+    alert('Could not load events: ' + e.message);
   });
 }
 function backToDashboard(){
@@ -323,13 +401,16 @@ function uniqueCode(){
 function addParticipant(){
   const name = document.getElementById('p-name').value.trim();
   const contact = document.getElementById('p-contact').value.trim();
-  if (!name) return;
+  if (!name) { alert('Enter a participant name first.'); return; }
   participantsRef().add({
     name, contact, uniqueCode: uniqueCode(), status: 'pending', addedAt: Date.now()
   }).then(() => {
     document.getElementById('p-name').value = '';
     document.getElementById('p-contact').value = '';
     loadParticipants();
+  }).catch(e => {
+    console.error('addParticipant failed:', e);
+    alert('Could not add participant: ' + e.message);
   });
 }
 function importCsv(evt){
