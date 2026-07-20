@@ -575,21 +575,40 @@ function exportZip(){
     const promises = [];
     snap.forEach(doc => {
       const p = doc.data();
-      promises.push(new Promise(resolve => {
+      promises.push(new Promise((resolve, reject) => {
         const tempDiv = document.createElement('div');
+        // Render off-screen but attached to the document — some browsers
+        // need the element in the DOM for canvas measurements to be reliable.
+        tempDiv.style.position = 'absolute';
+        tempDiv.style.left = '-9999px';
+        document.body.appendChild(tempDiv);
+
         new QRCode(tempDiv, { text: p.uniqueCode, width: 300, height: 300 });
+
         setTimeout(() => {
-          const img = tempDiv.querySelector('img') || tempDiv.querySelector('canvas');
-          const dataUrl = img.tagName === 'CANVAS' ? img.toDataURL('image/png') : img.src;
-          const base64 = dataUrl.split(',')[1];
-          zip.file(`${p.name.replace(/[^a-z0-9]/gi,'_')}.png`, base64, { base64: true });
-          resolve();
-        }, 100);
+          try {
+            // Read straight from the <canvas> — it draws synchronously,
+            // unlike the library's <img> tag which sets its src async
+            // and can still be blank when we go to read it.
+            const canvas = tempDiv.querySelector('canvas');
+            if (!canvas) throw new Error('QR canvas not found');
+            const dataUrl = canvas.toDataURL('image/png');
+            const base64 = dataUrl.split(',')[1];
+            zip.file(`${p.name.replace(/[^a-z0-9]/gi,'_') || 'participant'}.png`, base64, { base64: true });
+            resolve();
+          } catch (err) {
+            console.error('QR export failed for', p.name, err);
+            resolve(); // don't let one bad QR block the whole zip
+          } finally {
+            document.body.removeChild(tempDiv);
+          }
+        }, 60);
       }));
     });
     await Promise.all(promises);
-    zip.generateAsync({ type: 'blob' }).then(blob => saveAs(blob, `${currentEventTitle}-qrcodes.zip`));
-  });
+    zip.generateAsync({ type: 'blob' }).then(blob => saveAs(blob, `${currentEventTitle}-qrcodes.zip`))
+      .catch(e => alert('Could not build the zip file: ' + e.message));
+  }).catch(e => alert('Could not export QR codes: ' + e.message));
 }
 
 // ---------- STANDALONE TICKET VIEW (?ticket=eventId:participantId) ----------
